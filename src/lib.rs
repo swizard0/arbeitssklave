@@ -138,6 +138,14 @@ impl<W, B> Sklave<W, B> {
         self.maybe_inner = Some(inner);
         Ok(Obey::Order { order, sklavenwelt, })
     }
+
+    pub fn meister(&self) -> Result<Meister<W, B>, Error> {
+        let inner = self.maybe_inner.as_ref()
+            .ok_or(Error::Terminated)?;
+        Ok(Meister {
+            inner: inner.clone(),
+        })
+    }
 }
 
 impl<W, B> Drop for Sklave<W, B> {
