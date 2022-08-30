@@ -8,6 +8,9 @@ use std::{
     },
 };
 
+#[cfg(test)]
+mod tests;
+
 pub struct Meister<W, B> {
     inner: Arc<Inner<W, B>>,
 }
@@ -155,5 +158,31 @@ impl<W, B> Drop for Sklave<W, B> {
                 *state = InnerState::Terminated;
             }
         }
+    }
+}
+
+pub struct Rueckkopplung<W, B, S> {
+    meister: Meister<W, B>,
+    stamp: S,
+}
+
+pub struct Umschlag<T, S> {
+    pub value: T,
+    pub stamp: S,
+}
+
+impl<W, B, S> Rueckkopplung<W, B, S> {
+    pub fn new(meister: Meister<W, B>, stamp: S) -> Self {
+        Self { meister, stamp, }
+    }
+
+    pub fn commit<T, P, J>(self, value: T, thread_pool: &P) -> Result<(), Error>
+    where P: edeltraud::ThreadPool<J>,
+          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+          B: From<Umschlag<T, S>>,
+    {
+        let umschlag = Umschlag { value, stamp: self.stamp, };
+        let order = umschlag.into();
+        self.meister.order(order, thread_pool)
     }
 }
