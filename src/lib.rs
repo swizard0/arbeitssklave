@@ -10,6 +10,13 @@ use std::{
 
 pub mod komm;
 
+#[cfg(test)]
+mod tests;
+
+pub struct Freie<W, B> {
+    inner: Arc<Inner<W, B>>,
+}
+
 pub struct Meister<W, B> {
     inner: Arc<Inner<W, B>>,
 }
@@ -65,21 +72,26 @@ pub enum Error {
     MutexIsPoisoned,
 }
 
-pub fn start<W, B, P, J>(sklavenwelt: W, thread_pool: &P) -> Result<Meister<W, B>, Error>
-where P: edeltraud::ThreadPool<J>,
-      J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
-{
-    let meister = Meister {
-        inner: Arc::new(Inner {
-            state: Mutex::new(InnerState::Active(InnerStateActive {
-                orders: Vec::new(),
-                activity: Activity::Work,
-            })),
-        }),
-    };
+impl<W, B> Freie<W, B> {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                state: Mutex::new(InnerState::Active(InnerStateActive {
+                    orders: Vec::new(),
+                    activity: Activity::Work,
+                })),
+            }),
+        }
+    }
 
-    meister.whip(sklavenwelt, thread_pool)?;
-    Ok(meister)
+    pub fn versklaven<P, J>(self, sklavenwelt: W, thread_pool: &P) -> Result<Meister<W, B>, Error>
+    where P: edeltraud::ThreadPool<J>,
+          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+    {
+        let meister = Meister { inner: self.inner, };
+        meister.whip(sklavenwelt, thread_pool)?;
+        Ok(meister)
+    }
 }
 
 impl<W, B> Meister<W, B> {

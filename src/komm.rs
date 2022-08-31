@@ -10,14 +10,23 @@ use std::{
 };
 
 use crate::{
+    Freie,
     Meister,
     SklaveJob,
 };
 
-#[derive(Clone)]
 pub struct Sendegeraet<B> {
     inner: Arc<Inner<B>>,
     join_handle: Option<Arc<thread::JoinHandle<()>>>,
+}
+
+impl<B> Clone for Sendegeraet<B> {
+    fn clone(&self) -> Self {
+        Sendegeraet {
+            inner: self.inner.clone(),
+            join_handle: self.join_handle.clone(),
+        }
+    }
 }
 
 struct Inner<B> {
@@ -41,13 +50,18 @@ pub enum Error {
     Meister(super::Error),
 }
 
-pub struct Rueckkopplung<T, S> {
+pub struct Rueckkopplung<B, S> {
+    sendegeraet: Sendegeraet<B>,
+    stamp: S,
+}
+
+pub struct Umschlag<T, S> {
     pub payload: T,
     pub stamp: S,
 }
 
 impl<B> Sendegeraet<B> {
-    pub fn spawn<W, P, J>(meister: Meister<W, B>, thread_pool: P) -> Result<Self, Error>
+    pub fn spawn<W, P, J>(freie: &Freie<W, B>, thread_pool: P) -> Result<Self, Error>
     where P: edeltraud::ThreadPool<J> + Send + 'static,
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
           W: Send + 'static,
@@ -60,6 +74,7 @@ impl<B> Sendegeraet<B> {
             condvar: Condvar::new(),
         });
         let inner_clone = inner.clone();
+        let meister = Meister { inner: freie.inner.clone(), };
 
         let join_handle = thread::Builder::new()
             .name("arbeitssklave::komm::Sendegeraet".to_string())
@@ -70,10 +85,6 @@ impl<B> Sendegeraet<B> {
             inner,
             join_handle: Some(Arc::new(join_handle)),
         })
-    }
-
-    pub fn reply<T, S>(&self, payload: T, stamp: S) -> Result<(), Error> where B: From<Rueckkopplung<T, S>> {
-        self.order(Rueckkopplung { payload, stamp, }.into())
     }
 
     pub fn order(&self, order: B) -> Result<(), Error> {
@@ -109,6 +120,18 @@ impl<B> Drop for Sendegeraet<B> {
                 join_handle.join().ok();
             }
         }
+    }
+}
+
+impl<B, S> Rueckkopplung<B, S> {
+    pub fn new(sendegeraet: Sendegeraet<B>, stamp: S) -> Self {
+        Self { sendegeraet, stamp, }
+    }
+
+    pub fn commit<T>(self, payload: T) -> Result<(), Error> where B: From<Umschlag<T, S>> {
+        let umschlag = Umschlag { payload, stamp: self.stamp, };
+        let order = umschlag.into();
+        self.sendegeraet.order(order)
     }
 }
 
