@@ -8,7 +8,6 @@ use crate::{
     komm::{
         Umschlag,
         Sendegeraet,
-        Rueckkopplung,
     },
     Obey,
     Freie,
@@ -142,14 +141,13 @@ impl edeltraud::Job for Job {
                             sklavenwelt.even_meister.order(
                                 even::Order::Is {
                                     value,
-                                    rueckkopplung: Rueckkopplung::new(
-                                        sklavenwelt.sendegeraet.clone(),
-                                        Stamp {
+                                    rueckkopplung: sklavenwelt
+                                        .sendegeraet
+                                        .rueckkopplung(Stamp {
                                             current_value: value,
                                             current_guess: ValueType::Even,
                                             reply_tx,
-                                        },
-                                    ),
+                                        }),
                                 },
                                 &edeltraud::EdeltraudJobMap::<_, _, even::Job<_, _>>::new(thread_pool),
                             ).unwrap();
@@ -176,14 +174,13 @@ impl edeltraud::Job for Job {
                             sklavenwelt.even_meister.order(
                                 even::Order::Is {
                                     value: current_value - 1,
-                                    rueckkopplung: Rueckkopplung::new(
-                                        sklavenwelt.sendegeraet.clone(),
-                                        Stamp {
+                                    rueckkopplung: sklavenwelt
+                                        .sendegeraet
+                                        .rueckkopplung(Stamp {
                                             current_value: current_value - 1,
                                             current_guess: current_guess.neg(),
                                             reply_tx,
-                                        },
-                                    ),
+                                        }),
                                 },
                                 &edeltraud::EdeltraudJobMap::<_, _, even::Job<_, _>>::new(thread_pool),
                             ).unwrap();
@@ -210,14 +207,13 @@ impl edeltraud::Job for Job {
                             sklavenwelt.odd_meister.order(
                                 odd::Order::Is {
                                     value: current_value - 1,
-                                    rueckkopplung: Rueckkopplung::new(
-                                        sklavenwelt.sendegeraet.clone(),
-                                        Stamp {
+                                    rueckkopplung: sklavenwelt
+                                        .sendegeraet
+                                        .rueckkopplung(Stamp {
                                             current_value: current_value - 1,
                                             current_guess: current_guess.neg(),
                                             reply_tx,
-                                        },
-                                    ),
+                                        }),
                                 },
                                 &edeltraud::EdeltraudJobMap::<_, _, odd::Job<_, _>>::new(thread_pool),
                             ).unwrap();

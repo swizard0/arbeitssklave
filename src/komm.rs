@@ -87,6 +87,10 @@ impl<B> Sendegeraet<B> {
         })
     }
 
+    pub fn rueckkopplung<S>(&self, stamp: S) -> Rueckkopplung<B, S> {
+        Rueckkopplung { sendegeraet: self.clone(), stamp, }
+    }
+
     pub fn order(&self, order: B) -> Result<(), Error> {
         self.orders(std::iter::once(order))
     }
@@ -124,10 +128,6 @@ impl<B> Drop for Sendegeraet<B> {
 }
 
 impl<B, S> Rueckkopplung<B, S> {
-    pub fn new(sendegeraet: Sendegeraet<B>, stamp: S) -> Self {
-        Self { sendegeraet, stamp, }
-    }
-
     pub fn commit<T>(self, payload: T) -> Result<(), Error> where B: From<Umschlag<T, S>> {
         let umschlag = Umschlag { payload, stamp: self.stamp, };
         let order = umschlag.into();
