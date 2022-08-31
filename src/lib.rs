@@ -8,6 +8,8 @@ use std::{
     },
 };
 
+pub mod komm;
+
 pub struct Meister<W, B> {
     inner: Arc<Inner<W, B>>,
 }
@@ -63,32 +65,40 @@ pub enum Error {
     MutexIsPoisoned,
 }
 
+pub fn start<W, B, P, J>(sklavenwelt: W, thread_pool: &P) -> Result<Meister<W, B>, Error>
+where P: edeltraud::ThreadPool<J>,
+      J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+{
+    let meister = Meister {
+        inner: Arc::new(Inner {
+            state: Mutex::new(InnerState::Active(InnerStateActive {
+                orders: Vec::new(),
+                activity: Activity::Work,
+            })),
+        }),
+    };
+
+    meister.whip(sklavenwelt, thread_pool)?;
+    Ok(meister)
+}
+
 impl<W, B> Meister<W, B> {
-    pub fn start<P, J>(sklavenwelt: W, thread_pool: &P) -> Result<Self, Error>
-    where P: edeltraud::ThreadPool<J>,
-          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
-    {
-        let meister = Meister {
-            inner: Arc::new(Inner {
-                state: Mutex::new(InnerState::Active(InnerStateActive {
-                    orders: Vec::new(),
-                    activity: Activity::Work,
-                })),
-            }),
-        };
-
-        meister.whip(sklavenwelt, thread_pool)?;
-        Ok(meister)
-    }
-
     pub fn order<P, J>(&self, order: B, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
     {
+        self.orders(std::iter::once(order), thread_pool)
+    }
+
+    pub fn orders<P, J, I>(&self, orders: I, thread_pool: &P) -> Result<(), Error>
+    where P: edeltraud::ThreadPool<J>,
+          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+          I: IntoIterator<Item = B>,
+    {
         let prev_activity =
             match *self.inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
                 InnerState::Active(ref mut state) => {
-                    state.orders.push(order);
+                    state.orders.extend(orders);
                     mem::replace(&mut state.activity, Activity::Work)
                 },
                 InnerState::Terminated =>
