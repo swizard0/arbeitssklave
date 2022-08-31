@@ -8,12 +8,70 @@ use crate::{
     komm::{
         Umschlag,
         Sendegeraet,
+        UmschlagAbbrechen,
     },
     Obey,
     Freie,
     Meister,
     SklaveJob,
 };
+
+#[test]
+fn umschlag_abbrechen() {
+    #[derive(PartialEq, Eq, Debug)]
+    struct Canceled;
+
+    struct LocalStamp;
+
+    struct LocalOrder(UmschlagAbbrechen<LocalStamp>);
+
+    impl From<UmschlagAbbrechen<LocalStamp>> for LocalOrder {
+        fn from(umschlag_abbrechen: UmschlagAbbrechen<LocalStamp>) -> LocalOrder {
+            LocalOrder(umschlag_abbrechen)
+        }
+    }
+
+    struct LocalJob(SklaveJob<mpsc::Sender<Canceled>, LocalOrder>);
+
+    impl From<SklaveJob<mpsc::Sender<Canceled>, LocalOrder>> for LocalJob {
+        fn from(sklave_job: SklaveJob<mpsc::Sender<Canceled>, LocalOrder>) -> LocalJob {
+            LocalJob(sklave_job)
+        }
+    }
+
+    impl edeltraud::Job for LocalJob {
+        type Output = ();
+
+        fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+            let LocalJob(SklaveJob { mut sklave, sklavenwelt: mut tx, }) = self;
+            loop {
+                match sklave.obey(tx).unwrap() {
+                    Obey::Order { order: LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, }), sklavenwelt: next_tx, } => {
+                        tx = next_tx;
+                        tx.send(Canceled).ok();
+                    },
+                    Obey::Rest =>
+                        break,
+                }
+            }
+        }
+    }
+
+    let thread_pool: edeltraud::Edeltraud<LocalJob> = edeltraud::Builder::new()
+        .build()
+        .unwrap();
+
+    let driver_freie = Freie::new();
+    let sendegeraet = Sendegeraet::spawn(&driver_freie, thread_pool.clone()).unwrap();
+
+    let (tx, rx) = mpsc::channel();
+    let _driver_meister = driver_freie.versklaven(tx, &thread_pool).unwrap();
+
+    let rueckkopplung = sendegeraet.rueckkopplung(LocalStamp);
+    drop(rueckkopplung);
+
+    assert_eq!(rx.recv_timeout(std::time::Duration::from_millis(100)), Ok(Canceled));
+}
 
 #[test]
 fn even_odd_recursive() {
@@ -72,6 +130,7 @@ enum Order {
     },
     OddUmschlag(Umschlag<odd::Outcome, Stamp>),
     EvenUmschlag(Umschlag<even::Outcome, Stamp>),
+    Abbrechen(UmschlagAbbrechen<Stamp>),
 }
 
 impl From<Umschlag<odd::Outcome, Stamp>> for Order {
@@ -83,6 +142,12 @@ impl From<Umschlag<odd::Outcome, Stamp>> for Order {
 impl From<Umschlag<even::Outcome, Stamp>> for Order {
     fn from(umschlag: Umschlag<even::Outcome, Stamp>) -> Order {
         Order::EvenUmschlag(umschlag)
+    }
+}
+
+impl From<UmschlagAbbrechen<Stamp>> for Order {
+    fn from(umschlag_abbrechen: UmschlagAbbrechen<Stamp>) -> Order {
+        Order::Abbrechen(umschlag_abbrechen)
     }
 }
 
@@ -218,6 +283,8 @@ impl edeltraud::Job for Job {
                                 &edeltraud::EdeltraudJobMap::<_, _, odd::Job<_, _>>::new(thread_pool),
                             ).unwrap();
                         },
+                        Obey::Order { order: Order::Abbrechen(UmschlagAbbrechen { stamp: Stamp { current_value, current_guess, .. }, }), .. } =>
+                            panic!("unexpected UmschlagAbbrechen for current_value = {current_value:?} current_guess = {current_guess:?}"),
 
                         Obey::Rest =>
                             break,
@@ -232,6 +299,7 @@ mod odd {
         komm::{
             Umschlag,
             Rueckkopplung,
+            UmschlagAbbrechen,
         },
         Obey,
         Freie,
@@ -246,24 +314,27 @@ mod odd {
 
     pub struct Welt;
 
-    pub enum Order<B, S> {
+    pub enum Order<B, S> where B: From<UmschlagAbbrechen<S>> {
         Is {
             value: usize,
             rueckkopplung: Rueckkopplung<B, S>,
         },
     }
 
-    pub enum Job<B, S> {
+    pub enum Job<B, S> where B: From<UmschlagAbbrechen<S>> {
         Sklave(SklaveJob<Welt, Order<B, S>>),
     }
 
-    impl<B, S> From<SklaveJob<Welt, Order<B, S>>> for Job<B, S> {
+    impl<B, S> From<SklaveJob<Welt, Order<B, S>>> for Job<B, S> where B: From<UmschlagAbbrechen<S>> {
         fn from(sklave_job: SklaveJob<Welt, Order<B, S>>) -> Job<B, S> {
             Job::Sklave(sklave_job)
         }
     }
 
-    impl<B, S> edeltraud::Job for Job<B, S> where B: From<Umschlag<Outcome, S>> + Send + 'static, S: Send + 'static {
+    impl<B, S> edeltraud::Job for Job<B, S>
+    where B: From<Umschlag<Outcome, S>> + From<UmschlagAbbrechen<S>> + Send + 'static,
+          S: Send + 'static,
+    {
         type Output = ();
 
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
@@ -288,7 +359,7 @@ mod odd {
 
     pub fn start<P, B, S>(thread_pool: &P) -> Meister<Welt, Order<B, S>>
     where P: edeltraud::ThreadPool<Job<B, S>>,
-          B: From<Umschlag<Outcome, S>> + Send + 'static,
+          B: From<Umschlag<Outcome, S>> + From<UmschlagAbbrechen<S>> + Send + 'static,
           S: Send + 'static,
     {
         let freie = Freie::new();
@@ -301,6 +372,7 @@ mod even {
         komm::{
             Umschlag,
             Rueckkopplung,
+            UmschlagAbbrechen,
         },
         Obey,
         Freie,
@@ -315,24 +387,27 @@ mod even {
 
     pub struct Welt;
 
-    pub enum Order<B, S> {
+    pub enum Order<B, S> where B: From<UmschlagAbbrechen<S>> {
         Is {
             value: usize,
             rueckkopplung: Rueckkopplung<B, S>,
         },
     }
 
-    pub enum Job<B, S> {
+    pub enum Job<B, S> where B: From<UmschlagAbbrechen<S>> {
         Sklave(SklaveJob<Welt, Order<B, S>>),
     }
 
-    impl<B, S> From<SklaveJob<Welt, Order<B, S>>> for Job<B, S> {
+    impl<B, S> From<SklaveJob<Welt, Order<B, S>>> for Job<B, S> where B: From<UmschlagAbbrechen<S>> {
         fn from(sklave_job: SklaveJob<Welt, Order<B, S>>) -> Job<B, S> {
             Job::Sklave(sklave_job)
         }
     }
 
-    impl<B, S> edeltraud::Job for Job<B, S> where B: From<Umschlag<Outcome, S>> + Send + 'static, S: Send + 'static {
+    impl<B, S> edeltraud::Job for Job<B, S>
+    where B: From<Umschlag<Outcome, S>> + From<UmschlagAbbrechen<S>> + Send + 'static,
+          S: Send + 'static
+    {
         type Output = ();
 
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
@@ -357,7 +432,7 @@ mod even {
 
     pub fn start<P, B, S>(thread_pool: &P) -> Meister<Welt, Order<B, S>>
     where P: edeltraud::ThreadPool<Job<B, S>>,
-          B: From<Umschlag<Outcome, S>> + Send + 'static,
+          B: From<Umschlag<Outcome, S>> + From<UmschlagAbbrechen<S>> + Send + 'static,
           S: Send + 'static,
     {
         let freie = Freie::new();

@@ -50,13 +50,17 @@ pub enum Error {
     Meister(super::Error),
 }
 
-pub struct Rueckkopplung<B, S> {
+pub struct Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
     sendegeraet: Sendegeraet<B>,
-    stamp: S,
+    maybe_stamp: Option<S>,
 }
 
 pub struct Umschlag<T, S> {
     pub payload: T,
+    pub stamp: S,
+}
+
+pub struct UmschlagAbbrechen<S> {
     pub stamp: S,
 }
 
@@ -87,8 +91,11 @@ impl<B> Sendegeraet<B> {
         })
     }
 
-    pub fn rueckkopplung<S>(&self, stamp: S) -> Rueckkopplung<B, S> {
-        Rueckkopplung { sendegeraet: self.clone(), stamp, }
+    pub fn rueckkopplung<S>(&self, stamp: S) -> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+        Rueckkopplung {
+            sendegeraet: self.clone(),
+            maybe_stamp: Some(stamp),
+        }
     }
 
     pub fn order(&self, order: B) -> Result<(), Error> {
@@ -119,6 +126,7 @@ impl<B> Drop for Sendegeraet<B> {
                 if let Ok(mut locked_state) = self.inner.state.lock() {
                     if let InnerState::Active(..) = &*locked_state {
                         *locked_state = InnerState::Terminated(None);
+                        self.inner.condvar.notify_one();
                     }
                 }
                 join_handle.join().ok();
@@ -127,11 +135,22 @@ impl<B> Drop for Sendegeraet<B> {
     }
 }
 
-impl<B, S> Rueckkopplung<B, S> {
-    pub fn commit<T>(self, payload: T) -> Result<(), Error> where B: From<Umschlag<T, S>> {
-        let umschlag = Umschlag { payload, stamp: self.stamp, };
+impl<B, S> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+    pub fn commit<T>(mut self, payload: T) -> Result<(), Error> where B: From<Umschlag<T, S>> {
+        let stamp = self.maybe_stamp.take().unwrap();
+        let umschlag = Umschlag { payload, stamp, };
         let order = umschlag.into();
         self.sendegeraet.order(order)
+    }
+}
+
+impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+    fn drop(&mut self) {
+        if let Some(stamp) = self.maybe_stamp.take() {
+            let umschlag_abbrechen = UmschlagAbbrechen { stamp, };
+            let order = umschlag_abbrechen.into();
+            self.sendegeraet.order(order).ok();
+        }
     }
 }
 
