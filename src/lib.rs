@@ -12,6 +12,7 @@ use std::{
     },
 };
 
+pub mod ewig;
 pub mod komm;
 
 #[cfg(test)]
