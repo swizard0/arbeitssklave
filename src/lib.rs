@@ -2,6 +2,10 @@
 
 use std::{
     mem,
+    ops::{
+        Deref,
+        DerefMut,
+    },
     sync::{
         Arc,
         Mutex,
@@ -35,7 +39,7 @@ pub struct Sklave<W, B> {
 
 pub struct SklaveJob<W, B> {
     pub sklave: Sklave<W, B>,
-    pub sklavenwelt: W,
+    pub sklavenwelt: Sklavenwelt<W>,
 }
 
 struct Inner<W, B> {
@@ -54,16 +58,18 @@ struct InnerStateActive<W, B> {
 
 enum Activity<W> {
     Work,
-    Rest(W),
+    Rest(Sklavenwelt<W>),
 }
 
 pub enum Gehorsam<W, B> {
     Machen {
         befehl: B,
-        sklavenwelt: W,
+        sklavenwelt: Sklavenwelt<W>,
     },
     Rasten,
 }
+
+pub struct Sklavenwelt<W>(W);
 
 #[derive(Debug)]
 pub enum Error {
@@ -89,7 +95,7 @@ impl<W, B> Freie<W, B> {
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
     {
         let meister = Meister { inner: self.inner, };
-        meister.whip(sklavenwelt, thread_pool)?;
+        meister.whip(Sklavenwelt(sklavenwelt), thread_pool)?;
         Ok(meister)
     }
 }
@@ -124,7 +130,7 @@ impl<W, B> Meister<W, B> {
         }
     }
 
-    fn whip<P, J>(&self, sklavenwelt: W, thread_pool: &P) -> Result<(), Error>
+    fn whip<P, J>(&self, sklavenwelt: Sklavenwelt<W>, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
     {
@@ -140,7 +146,7 @@ impl<W, B> Meister<W, B> {
 }
 
 impl<W, B> Sklave<W, B> {
-    pub fn zu_ihren_diensten(&mut self, sklavenwelt: W) -> Result<Gehorsam<W, B>, Error> {
+    pub fn zu_ihren_diensten(&mut self, sklavenwelt: Sklavenwelt<W>) -> Result<Gehorsam<W, B>, Error> {
         let inner = self.maybe_inner.take()
             .ok_or(Error::Terminated)?;
         let befehl = match *inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
@@ -177,5 +183,19 @@ impl<W, B> Drop for Sklave<W, B> {
                 *state = InnerState::Terminated;
             }
         }
+    }
+}
+
+impl<W> Deref for Sklavenwelt<W> {
+    type Target = W;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<W> DerefMut for Sklavenwelt<W> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }

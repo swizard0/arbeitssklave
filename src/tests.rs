@@ -339,13 +339,15 @@ mod odd {
 
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
             match self {
-                Job::Sklave(SklaveJob { mut sklave, sklavenwelt: _, }) => {
+                Job::Sklave(SklaveJob { mut sklave, mut sklavenwelt, }) => {
                     loop {
-                        match sklave.zu_ihren_diensten(Welt).unwrap() {
-                            Gehorsam::Machen { befehl: Order::Is { value: 0, rueckkopplung, }, .. } => {
+                        match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                            Gehorsam::Machen { befehl: Order::Is { value: 0, rueckkopplung, }, sklavenwelt: next_sklavenwelt, } => {
+                                sklavenwelt = next_sklavenwelt;
                                 rueckkopplung.commit(Outcome::False).unwrap();
                             },
-                            Gehorsam::Machen { befehl: Order::Is { rueckkopplung, .. }, .. } => {
+                            Gehorsam::Machen { befehl: Order::Is { rueckkopplung, .. }, sklavenwelt: next_sklavenwelt, } => {
+                                sklavenwelt = next_sklavenwelt;
                                 rueckkopplung.commit(Outcome::NotSure).unwrap();
                             },
                             Gehorsam::Rasten =>
@@ -412,13 +414,15 @@ mod even {
 
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
             match self {
-                Job::Sklave(SklaveJob { mut sklave, sklavenwelt: _, }) => {
+                Job::Sklave(SklaveJob { mut sklave, mut sklavenwelt, }) => {
                     loop {
-                        match sklave.zu_ihren_diensten(Welt).unwrap() {
-                            Gehorsam::Machen { befehl: Order::Is { value: 0, rueckkopplung, }, .. } => {
+                        match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                            Gehorsam::Machen { befehl: Order::Is { value: 0, rueckkopplung, }, sklavenwelt: next_sklavenwelt, } => {
+                                sklavenwelt = next_sklavenwelt;
                                 rueckkopplung.commit(Outcome::True).unwrap();
                             },
-                            Gehorsam::Machen { befehl: Order::Is { rueckkopplung, .. }, .. } => {
+                            Gehorsam::Machen { befehl: Order::Is { rueckkopplung, .. }, sklavenwelt: next_sklavenwelt, } => {
+                                sklavenwelt = next_sklavenwelt;
                                 rueckkopplung.commit(Outcome::NotSure).unwrap();
                             },
                             Gehorsam::Rasten =>
