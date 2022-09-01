@@ -70,12 +70,20 @@ impl<B, E> Freie<B, E> {
           B: Send + 'static,
           E: From<Error> + Send + 'static,
     {
+        self.versklaven_als("arbeitssklave::ewig::Sklave".to_string(), sklave_job)
+    }
+
+    pub fn versklaven_als<F>(self, thread_name: String, sklave_job: F) -> Result<Meister<B, E>, E>
+    where F: FnOnce(&mut Sklave<B, E>) -> Result<(), E> + Send + 'static,
+          B: Send + 'static,
+          E: From<Error> + Send + 'static,
+    {
         let mut sklave = Sklave {
             inner: self.inner.clone(),
             taken_orders: Vec::new(),
         };
         let join_handle = thread::Builder::new()
-            .name("arbeitssklave::ewig::Sklave".to_string())
+            .name(thread_name)
             .spawn(move || {
                 if let Err(error) = sklave_job(&mut sklave) {
                     if let Ok(mut locked_state) = sklave.inner.state.lock() {

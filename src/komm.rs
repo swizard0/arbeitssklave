@@ -1,53 +1,45 @@
 use std::{
-    io,
-    mem,
-    sync::{
-        Arc,
-        Mutex,
-        Condvar,
+    ops::{
+        Deref,
     },
-    thread,
 };
 
 use crate::{
+    ewig,
     Freie,
     Meister,
     SklaveJob,
+    Error as ArbeitssklaveError,
 };
 
 pub struct Sendegeraet<B> {
-    inner: Arc<Inner<B>>,
-    join_handle: Option<Arc<thread::JoinHandle<()>>>,
+    ewig_meister: ewig::Meister<B, Error>,
 }
 
 impl<B> Clone for Sendegeraet<B> {
     fn clone(&self) -> Self {
-        Sendegeraet {
-            inner: self.inner.clone(),
-            join_handle: self.join_handle.clone(),
-        }
+        Self { ewig_meister: self.ewig_meister.clone(), }
     }
 }
 
-struct Inner<B> {
-    state: Mutex<InnerState<B>>,
-    condvar: Condvar,
-}
+impl<B> Deref for Sendegeraet<B> {
+    type Target = ewig::Meister<B, Error>;
 
-enum InnerState<B> {
-    Active(InnerStateActive<B>),
-    Terminated(Option<Error>),
-}
-
-struct InnerStateActive<B> {
-    orders: Vec<B>,
+    fn deref(&self) -> &Self::Target {
+        &self.ewig_meister
+    }
 }
 
 #[derive(Debug)]
 pub enum Error {
-    ThreadSpawn(io::Error),
-    MutexIsPoisoned,
-    Meister(super::Error),
+    Ewig(ewig::Error),
+    Meister(ArbeitssklaveError),
+}
+
+impl From<ewig::Error> for Error {
+    fn from(error: ewig::Error) -> Error {
+        Error::Ewig(error)
+    }
 }
 
 pub struct Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
@@ -71,66 +63,19 @@ impl<B> Sendegeraet<B> {
           W: Send + 'static,
           B: Send + 'static,
     {
-        let inner = Arc::new(Inner {
-            state: Mutex::new(InnerState::Active(InnerStateActive {
-                orders: Vec::new(),
-            })),
-            condvar: Condvar::new(),
-        });
-        let inner_clone = inner.clone();
         let meister = Meister { inner: freie.inner.clone(), };
-
-        let join_handle = thread::Builder::new()
-            .name("arbeitssklave::komm::Sendegeraet".to_string())
-            .spawn(move || sendegeraet_loop(&meister, &inner_clone, &thread_pool))
-            .map_err(Error::ThreadSpawn)?;
-
-        Ok(Sendegeraet {
-            inner,
-            join_handle: Some(Arc::new(join_handle)),
-        })
+        let ewig_meister = ewig::Freie::new()
+            .versklaven_als(
+                "arbeitssklave::komm::Sendegeraet".to_string(),
+                move |sklave| sendegeraet_loop(sklave, &meister, &thread_pool),
+            )?;
+        Ok(Sendegeraet { ewig_meister, })
     }
 
     pub fn rueckkopplung<S>(&self, stamp: S) -> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
         Rueckkopplung {
             sendegeraet: self.clone(),
             maybe_stamp: Some(stamp),
-        }
-    }
-
-    pub fn befehl(&self, order: B) -> Result<(), Error> {
-        self.befehle(std::iter::once(order))
-    }
-
-    pub fn befehle<I>(&self, orders: I) -> Result<(), Error> where I: IntoIterator<Item = B> {
-        match *self.inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
-            InnerState::Active(ref mut state) => {
-                state.orders.extend(orders);
-                self.inner.condvar.notify_one();
-                Ok(())
-            },
-            InnerState::Terminated(ref mut maybe_error) =>
-                if let Some(error) = maybe_error.take() {
-                    Err(error)
-                } else {
-                    Err(Error::MutexIsPoisoned)
-                },
-        }
-    }
-}
-
-impl<B> Drop for Sendegeraet<B> {
-    fn drop(&mut self) {
-        if let Some(join_handle_arc) = self.join_handle.take() {
-            if let Ok(join_handle) = Arc::try_unwrap(join_handle_arc) {
-                if let Ok(mut locked_state) = self.inner.state.lock() {
-                    if let InnerState::Active(..) = &*locked_state {
-                        *locked_state = InnerState::Terminated(None);
-                        self.inner.condvar.notify_one();
-                    }
-                }
-                join_handle.join().ok();
-            }
         }
     }
 }
@@ -155,52 +100,19 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
 }
 
 fn sendegeraet_loop<W, B, P, J>(
+    sklave: &mut ewig::Sklave<B, Error>,
     meister: &Meister<W, B>,
-    inner: &Inner<B>,
     thread_pool: &P,
 )
+    -> Result<(), Error>
 where P: edeltraud::ThreadPool<J> + Send + 'static,
       J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
       W: Send + 'static,
       B: Send + 'static,
 {
-    let mut taken_orders = Vec::new();
-    let mut maybe_maybe_error = None;
     loop {
-        if let Some(maybe_error) = maybe_maybe_error.take() {
-            if let Ok(mut locked_state) = inner.state.lock() {
-                *locked_state = InnerState::Terminated(maybe_error);
-            }
-            break;
-        }
-
-        if let Err(maybe_error) = acquire_orders(inner, &mut taken_orders) {
-            maybe_maybe_error = Some(maybe_error);
-            continue;
-        }
-        assert!(!taken_orders.is_empty());
-
-        if let Err(error) = meister.befehle(taken_orders.drain(..), thread_pool).map_err(Error::Meister) {
-            maybe_maybe_error = Some(Some(error));
-        }
-    }
-}
-
-fn acquire_orders<B>(inner: &Inner<B>, taken_orders: &mut Vec<B>) -> Result<(), Option<Error>> {
-    let mut locked_state = inner.state.lock()
-        .map_err(|_| None)?;
-    loop {
-        match &mut *locked_state {
-            InnerState::Active(InnerStateActive { orders, }) if !orders.is_empty() => {
-                mem::swap(orders, taken_orders);
-                return Ok(());
-            },
-            InnerState::Active(..) => {
-                locked_state = inner.condvar.wait(locked_state)
-                    .map_err(|_| None)?;
-            },
-            InnerState::Terminated(maybe_error) =>
-                return Err(maybe_error.take()),
-        }
+        let orders = sklave.zu_ihren_diensten()?;
+        meister.befehle(orders, thread_pool)
+            .map_err(Error::Meister)?;
     }
 }
