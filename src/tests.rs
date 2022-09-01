@@ -79,8 +79,8 @@ fn even_odd_recursive() {
         .build()
         .unwrap();
 
-    let odd_meister = odd::start(&edeltraud::EdeltraudJobMap::new(&thread_pool));
-    let even_meister = even::start(&edeltraud::EdeltraudJobMap::new(&thread_pool));
+    let odd_meister = odd::start(&edeltraud::ThreadPoolMap::new(&thread_pool));
+    let even_meister = even::start(&edeltraud::ThreadPoolMap::new(&thread_pool));
 
     let driver_freie = Freie::new();
     let sendegeraet = Sendegeraet::spawn(&driver_freie, thread_pool.clone()).unwrap();
@@ -193,10 +193,10 @@ impl edeltraud::Job for Job {
     fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
         match self {
             Job::Odd(job) => {
-                job.run(&edeltraud::EdeltraudJobMap::new(thread_pool));
+                job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
             },
             Job::Even(job) => {
-                job.run(&edeltraud::EdeltraudJobMap::new(thread_pool));
+                job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
             },
             Job::Driver(SklaveJob { mut sklave, mut sklavenwelt, }) =>
                 loop {
@@ -214,7 +214,7 @@ impl edeltraud::Job for Job {
                                             reply_tx,
                                         }),
                                 },
-                                &edeltraud::EdeltraudJobMap::<_, _, even::Job<_, _>>::new(thread_pool),
+                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
                             ).unwrap();
                         },
                         Obey::Order {
@@ -247,7 +247,7 @@ impl edeltraud::Job for Job {
                                             reply_tx,
                                         }),
                                 },
-                                &edeltraud::EdeltraudJobMap::<_, _, even::Job<_, _>>::new(thread_pool),
+                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
                             ).unwrap();
                         },
                         Obey::Order {
@@ -280,7 +280,7 @@ impl edeltraud::Job for Job {
                                             reply_tx,
                                         }),
                                 },
-                                &edeltraud::EdeltraudJobMap::<_, _, odd::Job<_, _>>::new(thread_pool),
+                                &edeltraud::ThreadPoolMap::<_, _, odd::Job<_, _>>::new(thread_pool),
                             ).unwrap();
                         },
                         Obey::Order { order: Order::Abbrechen(UmschlagAbbrechen { stamp: Stamp { current_value, current_guess, .. }, }), .. } =>
