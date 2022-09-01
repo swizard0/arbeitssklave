@@ -57,12 +57,12 @@ enum Activity<W> {
     Rest(W),
 }
 
-pub enum Obey<W, B> {
-    Order {
-        order: B,
+pub enum Gehorsam<W, B> {
+    Machen {
+        befehl: B,
         sklavenwelt: W,
     },
-    Rest,
+    Rasten,
 }
 
 #[derive(Debug)]
@@ -95,14 +95,14 @@ impl<W, B> Freie<W, B> {
 }
 
 impl<W, B> Meister<W, B> {
-    pub fn order<P, J>(&self, order: B, thread_pool: &P) -> Result<(), Error>
+    pub fn befehl<P, J>(&self, order: B, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
     {
-        self.orders(std::iter::once(order), thread_pool)
+        self.befehle(std::iter::once(order), thread_pool)
     }
 
-    pub fn orders<P, J, I>(&self, orders: I, thread_pool: &P) -> Result<(), Error>
+    pub fn befehle<P, J, I>(&self, orders: I, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
           I: IntoIterator<Item = B>,
@@ -140,10 +140,10 @@ impl<W, B> Meister<W, B> {
 }
 
 impl<W, B> Sklave<W, B> {
-    pub fn obey(&mut self, sklavenwelt: W) -> Result<Obey<W, B>, Error> {
+    pub fn zu_ihren_diensten(&mut self, sklavenwelt: W) -> Result<Gehorsam<W, B>, Error> {
         let inner = self.maybe_inner.take()
             .ok_or(Error::Terminated)?;
-        let order = match *inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
+        let befehl = match *inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
             InnerState::Active(ref mut state) =>
                 match state.orders.pop() {
                     Some(order) =>
@@ -151,14 +151,14 @@ impl<W, B> Sklave<W, B> {
                     None => {
                         assert!(matches!(state.activity, Activity::Work));
                         state.activity = Activity::Rest(sklavenwelt);
-                        return Ok(Obey::Rest);
+                        return Ok(Gehorsam::Rasten);
                     },
                 },
             InnerState::Terminated =>
                 return Err(Error::Terminated),
         };
         self.maybe_inner = Some(inner);
-        Ok(Obey::Order { order, sklavenwelt, })
+        Ok(Gehorsam::Machen { befehl, sklavenwelt, })
     }
 
     pub fn meister(&self) -> Result<Meister<W, B>, Error> {

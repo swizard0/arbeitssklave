@@ -10,9 +10,9 @@ use crate::{
         Sendegeraet,
         UmschlagAbbrechen,
     },
-    Obey,
     Freie,
     Meister,
+    Gehorsam,
     SklaveJob,
 };
 
@@ -45,12 +45,12 @@ fn umschlag_abbrechen() {
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
             let LocalJob(SklaveJob { mut sklave, sklavenwelt: mut tx, }) = self;
             loop {
-                match sklave.obey(tx).unwrap() {
-                    Obey::Order { order: LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, }), sklavenwelt: next_tx, } => {
+                match sklave.zu_ihren_diensten(tx).unwrap() {
+                    Gehorsam::Machen { befehl: LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, }), sklavenwelt: next_tx, } => {
                         tx = next_tx;
                         tx.send(Canceled).ok();
                     },
-                    Obey::Rest =>
+                    Gehorsam::Rasten =>
                         break,
                 }
             }
@@ -98,7 +98,7 @@ fn even_odd_recursive() {
     let mut outcomes = Vec::new();
     for value in [13, 8, 1024, 1, 0] {
         let (reply_tx, reply_rx) = mpsc::channel();
-        driver_meister.order(Order::Calc { value, reply_tx, }, &thread_pool).unwrap();
+        driver_meister.befehl(Order::Calc { value, reply_tx, }, &thread_pool).unwrap();
         let result = reply_rx.recv().unwrap();
         outcomes.push(result);
     }
@@ -200,10 +200,10 @@ impl edeltraud::Job for Job {
             },
             Job::Driver(SklaveJob { mut sklave, mut sklavenwelt, }) =>
                 loop {
-                    match sklave.obey(sklavenwelt).unwrap() {
-                        Obey::Order { order: Order::Calc { value, reply_tx, }, sklavenwelt: next_sklavenwelt, } => {
+                    match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                        Gehorsam::Machen { befehl: Order::Calc { value, reply_tx, }, sklavenwelt: next_sklavenwelt, } => {
                             sklavenwelt = next_sklavenwelt;
-                            sklavenwelt.even_meister.order(
+                            sklavenwelt.even_meister.befehl(
                                 even::Order::Is {
                                     value,
                                     rueckkopplung: sklavenwelt
@@ -217,15 +217,15 @@ impl edeltraud::Job for Job {
                                 &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
                             ).unwrap();
                         },
-                        Obey::Order {
-                            order: Order::OddUmschlag(Umschlag { payload: odd::Outcome::False, stamp: Stamp { current_guess, reply_tx, .. }, }),
+                        Gehorsam::Machen {
+                            befehl: Order::OddUmschlag(Umschlag { payload: odd::Outcome::False, stamp: Stamp { current_guess, reply_tx, .. }, }),
                             sklavenwelt: next_sklavenwelt,
                         } => {
                             sklavenwelt = next_sklavenwelt;
                             reply_tx.send(current_guess).unwrap();
                         },
-                        Obey::Order {
-                            order: Order::OddUmschlag(Umschlag {
+                        Gehorsam::Machen {
+                            befehl: Order::OddUmschlag(Umschlag {
                                 payload: odd::Outcome::NotSure,
                                 stamp: Stamp {
                                     current_value,
@@ -236,7 +236,7 @@ impl edeltraud::Job for Job {
                             sklavenwelt: next_sklavenwelt,
                         } => {
                             sklavenwelt = next_sklavenwelt;
-                            sklavenwelt.even_meister.order(
+                            sklavenwelt.even_meister.befehl(
                                 even::Order::Is {
                                     value: current_value - 1,
                                     rueckkopplung: sklavenwelt
@@ -250,15 +250,15 @@ impl edeltraud::Job for Job {
                                 &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
                             ).unwrap();
                         },
-                        Obey::Order {
-                            order: Order::EvenUmschlag(Umschlag { payload: even::Outcome::True, stamp: Stamp { current_guess, reply_tx, .. }, }),
+                        Gehorsam::Machen {
+                            befehl: Order::EvenUmschlag(Umschlag { payload: even::Outcome::True, stamp: Stamp { current_guess, reply_tx, .. }, }),
                             sklavenwelt: next_sklavenwelt,
                         } => {
                             sklavenwelt = next_sklavenwelt;
                             reply_tx.send(current_guess).unwrap();
                         },
-                        Obey::Order {
-                            order: Order::EvenUmschlag(Umschlag {
+                        Gehorsam::Machen {
+                            befehl: Order::EvenUmschlag(Umschlag {
                                 payload: even::Outcome::NotSure,
                                 stamp: Stamp {
                                     current_value,
@@ -269,7 +269,7 @@ impl edeltraud::Job for Job {
                             sklavenwelt: next_sklavenwelt,
                         } => {
                             sklavenwelt = next_sklavenwelt;
-                            sklavenwelt.odd_meister.order(
+                            sklavenwelt.odd_meister.befehl(
                                 odd::Order::Is {
                                     value: current_value - 1,
                                     rueckkopplung: sklavenwelt
@@ -283,10 +283,10 @@ impl edeltraud::Job for Job {
                                 &edeltraud::ThreadPoolMap::<_, _, odd::Job<_, _>>::new(thread_pool),
                             ).unwrap();
                         },
-                        Obey::Order { order: Order::Abbrechen(UmschlagAbbrechen { stamp: Stamp { current_value, current_guess, .. }, }), .. } =>
+                        Gehorsam::Machen { befehl: Order::Abbrechen(UmschlagAbbrechen { stamp: Stamp { current_value, current_guess, .. }, }), .. } =>
                             panic!("unexpected UmschlagAbbrechen for current_value = {current_value:?} current_guess = {current_guess:?}"),
 
-                        Obey::Rest =>
+                        Gehorsam::Rasten =>
                             break,
                     }
                 },
@@ -301,9 +301,9 @@ mod odd {
             Rueckkopplung,
             UmschlagAbbrechen,
         },
-        Obey,
         Freie,
         Meister,
+        Gehorsam,
         SklaveJob,
     };
 
@@ -341,14 +341,14 @@ mod odd {
             match self {
                 Job::Sklave(SklaveJob { mut sklave, sklavenwelt: _, }) => {
                     loop {
-                        match sklave.obey(Welt).unwrap() {
-                            Obey::Order { order: Order::Is { value: 0, rueckkopplung, }, .. } => {
+                        match sklave.zu_ihren_diensten(Welt).unwrap() {
+                            Gehorsam::Machen { befehl: Order::Is { value: 0, rueckkopplung, }, .. } => {
                                 rueckkopplung.commit(Outcome::False).unwrap();
                             },
-                            Obey::Order { order: Order::Is { rueckkopplung, .. }, .. } => {
+                            Gehorsam::Machen { befehl: Order::Is { rueckkopplung, .. }, .. } => {
                                 rueckkopplung.commit(Outcome::NotSure).unwrap();
                             },
-                            Obey::Rest =>
+                            Gehorsam::Rasten =>
                                 break,
                         }
                     }
@@ -374,9 +374,9 @@ mod even {
             Rueckkopplung,
             UmschlagAbbrechen,
         },
-        Obey,
         Freie,
         Meister,
+        Gehorsam,
         SklaveJob,
     };
 
@@ -414,14 +414,14 @@ mod even {
             match self {
                 Job::Sklave(SklaveJob { mut sklave, sklavenwelt: _, }) => {
                     loop {
-                        match sklave.obey(Welt).unwrap() {
-                            Obey::Order { order: Order::Is { value: 0, rueckkopplung, }, .. } => {
+                        match sklave.zu_ihren_diensten(Welt).unwrap() {
+                            Gehorsam::Machen { befehl: Order::Is { value: 0, rueckkopplung, }, .. } => {
                                 rueckkopplung.commit(Outcome::True).unwrap();
                             },
-                            Obey::Order { order: Order::Is { rueckkopplung, .. }, .. } => {
+                            Gehorsam::Machen { befehl: Order::Is { rueckkopplung, .. }, .. } => {
                                 rueckkopplung.commit(Outcome::NotSure).unwrap();
                             },
-                            Obey::Rest =>
+                            Gehorsam::Rasten =>
                                 break,
                         }
                     }

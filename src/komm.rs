@@ -180,7 +180,7 @@ where P: edeltraud::ThreadPool<J> + Send + 'static,
         }
         assert!(!taken_orders.is_empty());
 
-        if let Err(error) = meister.orders(taken_orders.drain(..), thread_pool).map_err(Error::Meister) {
+        if let Err(error) = meister.befehle(taken_orders.drain(..), thread_pool).map_err(Error::Meister) {
             maybe_maybe_error = Some(Some(error));
         }
     }
