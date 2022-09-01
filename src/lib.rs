@@ -91,6 +91,10 @@ impl<W, B> Freie<W, B> {
         }
     }
 
+    pub fn meister(&self) -> Meister<W, B> {
+        Meister { inner: self.inner.clone(), }
+    }
+
     pub fn versklaven<P, J>(self, sklavenwelt: W, thread_pool: &P) -> Result<Meister<W, B>, Error>
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
