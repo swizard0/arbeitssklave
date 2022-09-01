@@ -62,7 +62,7 @@ fn umschlag_abbrechen() {
         .unwrap();
 
     let driver_freie = Freie::new();
-    let sendegeraet = Sendegeraet::spawn(&driver_freie, thread_pool.clone()).unwrap();
+    let sendegeraet = Sendegeraet::starten(&driver_freie, thread_pool.clone()).unwrap();
 
     let (tx, rx) = mpsc::channel();
     let _driver_meister = driver_freie.versklaven(tx, &thread_pool).unwrap();
@@ -83,7 +83,7 @@ fn even_odd_recursive() {
     let even_meister = even::start(&edeltraud::ThreadPoolMap::new(&thread_pool));
 
     let driver_freie = Freie::new();
-    let sendegeraet = Sendegeraet::spawn(&driver_freie, thread_pool.clone()).unwrap();
+    let sendegeraet = Sendegeraet::starten(&driver_freie, thread_pool.clone()).unwrap();
     let driver_meister =
         driver_freie.versklaven(
             Welt {

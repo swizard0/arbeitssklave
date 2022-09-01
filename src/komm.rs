@@ -65,7 +65,7 @@ pub struct UmschlagAbbrechen<S> {
 }
 
 impl<B> Sendegeraet<B> {
-    pub fn spawn<W, P, J>(freie: &Freie<W, B>, thread_pool: P) -> Result<Self, Error>
+    pub fn starten<W, P, J>(freie: &Freie<W, B>, thread_pool: P) -> Result<Self, Error>
     where P: edeltraud::ThreadPool<J> + Send + 'static,
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
           W: Send + 'static,
@@ -98,11 +98,11 @@ impl<B> Sendegeraet<B> {
         }
     }
 
-    pub fn order(&self, order: B) -> Result<(), Error> {
-        self.orders(std::iter::once(order))
+    pub fn befehl(&self, order: B) -> Result<(), Error> {
+        self.befehle(std::iter::once(order))
     }
 
-    pub fn orders<I>(&self, orders: I) -> Result<(), Error> where I: IntoIterator<Item = B> {
+    pub fn befehle<I>(&self, orders: I) -> Result<(), Error> where I: IntoIterator<Item = B> {
         match *self.inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
             InnerState::Active(ref mut state) => {
                 state.orders.extend(orders);
@@ -140,7 +140,7 @@ impl<B, S> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
         let stamp = self.maybe_stamp.take().unwrap();
         let umschlag = Umschlag { payload, stamp, };
         let order = umschlag.into();
-        self.sendegeraet.order(order)
+        self.sendegeraet.befehl(order)
     }
 }
 
@@ -149,7 +149,7 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
         if let Some(stamp) = self.maybe_stamp.take() {
             let umschlag_abbrechen = UmschlagAbbrechen { stamp, };
             let order = umschlag_abbrechen.into();
-            self.sendegeraet.order(order).ok();
+            self.sendegeraet.befehl(order).ok();
         }
     }
 }
