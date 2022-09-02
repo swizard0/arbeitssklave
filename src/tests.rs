@@ -46,12 +46,18 @@ fn umschlag_abbrechen() {
             let LocalJob(SklaveJob { mut sklave, sklavenwelt: mut tx, }) = self;
             loop {
                 match sklave.zu_ihren_diensten(tx).unwrap() {
-                    Gehorsam::Machen { befehl: LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, }), sklavenwelt: next_tx, } => {
-                        tx = next_tx;
-                        tx.send(Canceled).ok();
-                    },
                     Gehorsam::Rasten =>
                         break,
+                    Gehorsam::Machen { befehle, sklavenwelt: next_tx, } => {
+                        tx = next_tx;
+                        for befehl in befehle {
+                            match befehl {
+                                LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, }) => {
+                                    tx.send(Canceled).ok();
+                                },
+                            }
+                        }
+                    },
                 }
             }
         }
@@ -201,93 +207,87 @@ impl edeltraud::Job for Job {
             Job::Driver(SklaveJob { mut sklave, mut sklavenwelt, }) =>
                 loop {
                     match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
-                        Gehorsam::Machen { befehl: Order::Calc { value, reply_tx, }, sklavenwelt: next_sklavenwelt, } => {
-                            sklavenwelt = next_sklavenwelt;
-                            sklavenwelt.even_meister.befehl(
-                                even::Order::Is {
-                                    value,
-                                    rueckkopplung: sklavenwelt
-                                        .sendegeraet
-                                        .rueckkopplung(Stamp {
-                                            current_value: value,
-                                            current_guess: ValueType::Even,
-                                            reply_tx,
-                                        }),
-                                },
-                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
-                            ).unwrap();
-                        },
-                        Gehorsam::Machen {
-                            befehl: Order::OddUmschlag(Umschlag { payload: odd::Outcome::False, stamp: Stamp { current_guess, reply_tx, .. }, }),
-                            sklavenwelt: next_sklavenwelt,
-                        } => {
-                            sklavenwelt = next_sklavenwelt;
-                            reply_tx.send(current_guess).unwrap();
-                        },
-                        Gehorsam::Machen {
-                            befehl: Order::OddUmschlag(Umschlag {
-                                payload: odd::Outcome::NotSure,
-                                stamp: Stamp {
-                                    current_value,
-                                    current_guess,
-                                    reply_tx,
-                                },
-                            }),
-                            sklavenwelt: next_sklavenwelt,
-                        } => {
-                            sklavenwelt = next_sklavenwelt;
-                            sklavenwelt.even_meister.befehl(
-                                even::Order::Is {
-                                    value: current_value - 1,
-                                    rueckkopplung: sklavenwelt
-                                        .sendegeraet
-                                        .rueckkopplung(Stamp {
-                                            current_value: current_value - 1,
-                                            current_guess: current_guess.neg(),
-                                            reply_tx,
-                                        }),
-                                },
-                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
-                            ).unwrap();
-                        },
-                        Gehorsam::Machen {
-                            befehl: Order::EvenUmschlag(Umschlag { payload: even::Outcome::True, stamp: Stamp { current_guess, reply_tx, .. }, }),
-                            sklavenwelt: next_sklavenwelt,
-                        } => {
-                            sklavenwelt = next_sklavenwelt;
-                            reply_tx.send(current_guess).unwrap();
-                        },
-                        Gehorsam::Machen {
-                            befehl: Order::EvenUmschlag(Umschlag {
-                                payload: even::Outcome::NotSure,
-                                stamp: Stamp {
-                                    current_value,
-                                    current_guess,
-                                    reply_tx,
-                                },
-                            }),
-                            sklavenwelt: next_sklavenwelt,
-                        } => {
-                            sklavenwelt = next_sklavenwelt;
-                            sklavenwelt.odd_meister.befehl(
-                                odd::Order::Is {
-                                    value: current_value - 1,
-                                    rueckkopplung: sklavenwelt
-                                        .sendegeraet
-                                        .rueckkopplung(Stamp {
-                                            current_value: current_value - 1,
-                                            current_guess: current_guess.neg(),
-                                            reply_tx,
-                                        }),
-                                },
-                                &edeltraud::ThreadPoolMap::<_, _, odd::Job<_, _>>::new(thread_pool),
-                            ).unwrap();
-                        },
-                        Gehorsam::Machen { befehl: Order::Abbrechen(UmschlagAbbrechen { stamp: Stamp { current_value, current_guess, .. }, }), .. } =>
-                            panic!("unexpected UmschlagAbbrechen for current_value = {current_value:?} current_guess = {current_guess:?}"),
-
                         Gehorsam::Rasten =>
                             break,
+                        Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, } => {
+                            sklavenwelt = next_sklavenwelt;
+                            for befehl in befehle {
+                                match befehl {
+                                    Order::Calc { value, reply_tx, } => {
+                                        sklavenwelt
+                                            .even_meister
+                                            .befehl(
+                                                even::Order::Is {
+                                                    value,
+                                                    rueckkopplung: sklavenwelt
+                                                        .sendegeraet
+                                                        .rueckkopplung(Stamp {
+                                                            current_value: value,
+                                                            current_guess: ValueType::Even,
+                                                            reply_tx,
+                                                        }),
+                                                },
+                                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
+                                            )
+                                            .unwrap();
+                                    },
+                                    Order::OddUmschlag(Umschlag { payload: odd::Outcome::False, stamp: Stamp { current_guess, reply_tx, .. }, }) => {
+                                        reply_tx.send(current_guess).unwrap();
+                                    },
+                                    Order::OddUmschlag(Umschlag {
+                                        payload: odd::Outcome::NotSure,
+                                        stamp: Stamp { current_value, current_guess, reply_tx, },
+                                    }) => {
+                                        sklavenwelt
+                                            .even_meister
+                                            .befehl(
+                                                even::Order::Is {
+                                                    value: current_value - 1,
+                                                    rueckkopplung: sklavenwelt
+                                                        .sendegeraet
+                                                        .rueckkopplung(Stamp {
+                                                            current_value: current_value - 1,
+                                                            current_guess: current_guess.neg(),
+                                                            reply_tx,
+                                                        }),
+                                                },
+                                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
+                                            )
+                                            .unwrap();
+                                    },
+                                    Order::EvenUmschlag(Umschlag { payload: even::Outcome::True, stamp: Stamp { current_guess, reply_tx, .. }, }) => {
+                                        reply_tx.send(current_guess).unwrap();
+                                    },
+                                    Order::EvenUmschlag(Umschlag {
+                                        payload: even::Outcome::NotSure,
+                                        stamp: Stamp {
+                                            current_value,
+                                            current_guess,
+                                            reply_tx,
+                                        },
+                                    }) => {
+                                        sklavenwelt
+                                            .odd_meister
+                                            .befehl(
+                                                odd::Order::Is {
+                                                    value: current_value - 1,
+                                                    rueckkopplung: sklavenwelt
+                                                        .sendegeraet
+                                                        .rueckkopplung(Stamp {
+                                                            current_value: current_value - 1,
+                                                            current_guess: current_guess.neg(),
+                                                            reply_tx,
+                                                        }),
+                                                },
+                                                &edeltraud::ThreadPoolMap::<_, _, odd::Job<_, _>>::new(thread_pool),
+                                            )
+                                            .unwrap();
+                                    },
+                                    Order::Abbrechen(UmschlagAbbrechen { stamp: Stamp { current_value, current_guess, .. }, }) =>
+                                        panic!("unexpected UmschlagAbbrechen for current_value = {current_value:?} current_guess = {current_guess:?}"),
+                                }
+                            }
+                        },
                     }
                 },
         }
@@ -342,16 +342,19 @@ mod odd {
                 Job::Sklave(SklaveJob { mut sklave, mut sklavenwelt, }) => {
                     loop {
                         match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
-                            Gehorsam::Machen { befehl: Order::Is { value: 0, rueckkopplung, }, sklavenwelt: next_sklavenwelt, } => {
-                                sklavenwelt = next_sklavenwelt;
-                                rueckkopplung.commit(Outcome::False).unwrap();
-                            },
-                            Gehorsam::Machen { befehl: Order::Is { rueckkopplung, .. }, sklavenwelt: next_sklavenwelt, } => {
-                                sklavenwelt = next_sklavenwelt;
-                                rueckkopplung.commit(Outcome::NotSure).unwrap();
-                            },
                             Gehorsam::Rasten =>
                                 break,
+                            Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, } => {
+                                sklavenwelt = next_sklavenwelt;
+                                for befehl in befehle {
+                                    match befehl {
+                                        Order::Is { value: 0, rueckkopplung, } =>
+                                            rueckkopplung.commit(Outcome::False).unwrap(),
+                                        Order::Is { rueckkopplung, .. } =>
+                                            rueckkopplung.commit(Outcome::NotSure).unwrap(),
+                                    }
+                                }
+                            },
                         }
                     }
                 },
@@ -417,16 +420,19 @@ mod even {
                 Job::Sklave(SklaveJob { mut sklave, mut sklavenwelt, }) => {
                     loop {
                         match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
-                            Gehorsam::Machen { befehl: Order::Is { value: 0, rueckkopplung, }, sklavenwelt: next_sklavenwelt, } => {
-                                sklavenwelt = next_sklavenwelt;
-                                rueckkopplung.commit(Outcome::True).unwrap();
-                            },
-                            Gehorsam::Machen { befehl: Order::Is { rueckkopplung, .. }, sklavenwelt: next_sklavenwelt, } => {
-                                sklavenwelt = next_sklavenwelt;
-                                rueckkopplung.commit(Outcome::NotSure).unwrap();
-                            },
                             Gehorsam::Rasten =>
                                 break,
+                            Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, } => {
+                                sklavenwelt = next_sklavenwelt;
+                                for befehl in befehle {
+                                    match befehl {
+                                        Order::Is { value: 0, rueckkopplung, } =>
+                                            rueckkopplung.commit(Outcome::True).unwrap(),
+                                        Order::Is { rueckkopplung, .. } =>
+                                            rueckkopplung.commit(Outcome::NotSure).unwrap(),
+                                    }
+                                }
+                            },
                         }
                     }
                 },

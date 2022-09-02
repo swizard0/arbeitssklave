@@ -36,6 +36,7 @@ impl<W, B> Clone for Meister<W, B> {
 
 pub struct Sklave<W, B> {
     maybe_inner: Option<Arc<Inner<W, B>>>,
+    taken_orders: Vec<B>,
 }
 
 pub struct SklaveJob<W, B> {
@@ -62,9 +63,9 @@ enum Activity<W> {
     Rest(Sklavenwelt<W>),
 }
 
-pub enum Gehorsam<W, B> {
+pub enum Gehorsam<W, B, I> where I: Iterator<Item = B> {
     Machen {
-        befehl: B,
+        befehle: I,
         sklavenwelt: Sklavenwelt<W>,
     },
     Rasten,
@@ -142,7 +143,10 @@ impl<W, B> Meister<W, B> {
         edeltraud::job(
             thread_pool,
             SklaveJob {
-                sklave: Sklave { maybe_inner: Some(self.inner.clone()), },
+                sklave: Sklave {
+                    maybe_inner: Some(self.inner.clone()),
+                    taken_orders: Vec::new(),
+                },
                 sklavenwelt,
             },
         )
@@ -151,25 +155,28 @@ impl<W, B> Meister<W, B> {
 }
 
 impl<W, B> Sklave<W, B> {
-    pub fn zu_ihren_diensten(&mut self, sklavenwelt: Sklavenwelt<W>) -> Result<Gehorsam<W, B>, Error> {
+    pub fn zu_ihren_diensten(&mut self, sklavenwelt: Sklavenwelt<W>) -> Result<Gehorsam<W, B, impl Iterator<Item = B> + '_>, Error> {
         let inner = self.maybe_inner.take()
             .ok_or(Error::Terminated)?;
-        let befehl = match *inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
-            InnerState::Active(ref mut state) =>
-                match state.orders.pop() {
-                    Some(order) =>
-                        order,
-                    None => {
-                        assert!(matches!(state.activity, Activity::Work));
-                        state.activity = Activity::Rest(sklavenwelt);
-                        return Ok(Gehorsam::Rasten);
-                    },
-                },
+        match &mut *inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
+            InnerState::Active(state) if state.orders.is_empty() => {
+                assert!(matches!(state.activity, Activity::Work));
+                state.activity = Activity::Rest(sklavenwelt);
+                return Ok(Gehorsam::Rasten);
+            },
+            InnerState::Active(InnerStateActive { orders, .. }) => {
+                assert!(self.taken_orders.is_empty());
+                mem::swap(orders, &mut self.taken_orders);
+            },
             InnerState::Terminated =>
                 return Err(Error::Terminated),
-        };
+        }
+
         self.maybe_inner = Some(inner);
-        Ok(Gehorsam::Machen { befehl, sklavenwelt, })
+        Ok(Gehorsam::Machen {
+            befehle: self.taken_orders.drain(..),
+            sklavenwelt,
+        })
     }
 
     pub fn meister(&self) -> Result<Meister<W, B>, Error> {
