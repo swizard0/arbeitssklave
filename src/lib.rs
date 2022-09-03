@@ -133,7 +133,7 @@ impl<W, B> Meister<W, B> {
             Activity::Work =>
                 Ok(()),
             Activity::Rest(sklavenwelt) =>
-                self.whip(sklavenwelt, thread_pool)
+                self.whip(sklavenwelt, thread_pool),
         }
     }
 
