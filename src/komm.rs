@@ -47,11 +47,13 @@ pub struct Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
     maybe_stamp: Option<S>,
 }
 
+#[derive(Debug)]
 pub struct Umschlag<T, S> {
     pub payload: T,
     pub stamp: S,
 }
 
+#[derive(Debug)]
 pub struct UmschlagAbbrechen<S> {
     pub stamp: S,
 }
