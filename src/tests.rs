@@ -14,6 +14,7 @@ use crate::{
     Meister,
     Gehorsam,
     SklaveJob,
+    SklavenBefehl,
 };
 
 #[test]
@@ -43,21 +44,27 @@ fn umschlag_abbrechen() {
         type Output = ();
 
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
-            let LocalJob(SklaveJob { mut sklave, sklavenwelt: mut tx, }) = self;
+            let LocalJob(SklaveJob { mut sklave, mut sklavenwelt, }) = self;
             loop {
-                match sklave.zu_ihren_diensten(tx).unwrap() {
+                match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
                     Gehorsam::Rasten =>
                         break,
-                    Gehorsam::Machen { befehle, sklavenwelt: next_tx, } => {
-                        tx = next_tx;
-                        for befehl in befehle {
-                            match befehl {
-                                LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, }) => {
-                                    tx.send(Canceled).ok();
+                    Gehorsam::Machen { mut befehle, } =>
+                        loop {
+                            match befehle.befehl() {
+                                SklavenBefehl::Mehr { befehl: LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, }), mehr_befehle, } => {
+                                    mehr_befehle
+                                        .sklavenwelt()
+                                        .send(Canceled)
+                                        .ok();
+                                    befehle = mehr_befehle;
+                                },
+                                SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
+                                    sklavenwelt = next_sklavenwelt;
+                                    break;
                                 },
                             }
-                        }
-                    },
+                        },
                 }
             }
         }
@@ -209,17 +216,18 @@ impl edeltraud::Job for Job {
                     match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
                         Gehorsam::Rasten =>
                             break,
-                        Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, } => {
-                            sklavenwelt = next_sklavenwelt;
-                            for befehl in befehle {
-                                match befehl {
-                                    Order::Calc { value, reply_tx, } => {
-                                        sklavenwelt
+                        Gehorsam::Machen { mut befehle, } =>
+                            loop {
+                                match befehle.befehl() {
+                                    SklavenBefehl::Mehr { befehl: Order::Calc { value, reply_tx, }, mehr_befehle, } => {
+                                        mehr_befehle
+                                            .sklavenwelt()
                                             .even_meister
                                             .befehl(
                                                 even::Order::Is {
                                                     value,
-                                                    rueckkopplung: sklavenwelt
+                                                    rueckkopplung: mehr_befehle
+                                                        .sklavenwelt()
                                                         .sendegeraet
                                                         .rueckkopplung(Stamp {
                                                             current_value: value,
@@ -230,20 +238,33 @@ impl edeltraud::Job for Job {
                                                 &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
                                             )
                                             .unwrap();
+                                        befehle = mehr_befehle;
                                     },
-                                    Order::OddUmschlag(Umschlag { payload: odd::Outcome::False, stamp: Stamp { current_guess, reply_tx, .. }, }) => {
+                                    SklavenBefehl::Mehr {
+                                        befehl: Order::OddUmschlag(Umschlag {
+                                            payload: odd::Outcome::False,
+                                            stamp: Stamp { current_guess, reply_tx, .. },
+                                        }),
+                                        mehr_befehle,
+                                    } => {
                                         reply_tx.send(current_guess).unwrap();
+                                        befehle = mehr_befehle;
                                     },
-                                    Order::OddUmschlag(Umschlag {
-                                        payload: odd::Outcome::NotSure,
-                                        stamp: Stamp { current_value, current_guess, reply_tx, },
-                                    }) => {
-                                        sklavenwelt
+                                    SklavenBefehl::Mehr {
+                                        befehl: Order::OddUmschlag(Umschlag {
+                                            payload: odd::Outcome::NotSure,
+                                            stamp: Stamp { current_value, current_guess, reply_tx, },
+                                        }),
+                                        mehr_befehle,
+                                    } => {
+                                        mehr_befehle
+                                            .sklavenwelt()
                                             .even_meister
                                             .befehl(
                                                 even::Order::Is {
                                                     value: current_value - 1,
-                                                    rueckkopplung: sklavenwelt
+                                                    rueckkopplung: mehr_befehle
+                                                        .sklavenwelt()
                                                         .sendegeraet
                                                         .rueckkopplung(Stamp {
                                                             current_value: current_value - 1,
@@ -254,24 +275,37 @@ impl edeltraud::Job for Job {
                                                 &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
                                             )
                                             .unwrap();
+                                        befehle = mehr_befehle;
                                     },
-                                    Order::EvenUmschlag(Umschlag { payload: even::Outcome::True, stamp: Stamp { current_guess, reply_tx, .. }, }) => {
+                                    SklavenBefehl::Mehr {
+                                        befehl: Order::EvenUmschlag(Umschlag {
+                                            payload: even::Outcome::True,
+                                            stamp: Stamp { current_guess, reply_tx, .. },
+                                        }),
+                                        mehr_befehle,
+                                    } => {
                                         reply_tx.send(current_guess).unwrap();
+                                        befehle = mehr_befehle;
                                     },
-                                    Order::EvenUmschlag(Umschlag {
-                                        payload: even::Outcome::NotSure,
-                                        stamp: Stamp {
-                                            current_value,
-                                            current_guess,
-                                            reply_tx,
-                                        },
-                                    }) => {
-                                        sklavenwelt
+                                    SklavenBefehl::Mehr {
+                                        befehl: Order::EvenUmschlag(Umschlag {
+                                            payload: even::Outcome::NotSure,
+                                            stamp: Stamp {
+                                                current_value,
+                                                current_guess,
+                                                reply_tx,
+                                            },
+                                        }),
+                                        mehr_befehle,
+                                    } => {
+                                        mehr_befehle
+                                            .sklavenwelt()
                                             .odd_meister
                                             .befehl(
                                                 odd::Order::Is {
                                                     value: current_value - 1,
-                                                    rueckkopplung: sklavenwelt
+                                                    rueckkopplung: mehr_befehle
+                                                        .sklavenwelt()
                                                         .sendegeraet
                                                         .rueckkopplung(Stamp {
                                                             current_value: current_value - 1,
@@ -282,12 +316,19 @@ impl edeltraud::Job for Job {
                                                 &edeltraud::ThreadPoolMap::<_, _, odd::Job<_, _>>::new(thread_pool),
                                             )
                                             .unwrap();
+                                        befehle = mehr_befehle;
                                     },
-                                    Order::Abbrechen(UmschlagAbbrechen { stamp: Stamp { current_value, current_guess, .. }, }) =>
+                                    SklavenBefehl::Mehr {
+                                        befehl: Order::Abbrechen(UmschlagAbbrechen { stamp: Stamp { current_value, current_guess, .. }, }),
+                                        ..
+                                    } =>
                                         panic!("unexpected UmschlagAbbrechen for current_value = {current_value:?} current_guess = {current_guess:?}"),
+                                    SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
+                                        sklavenwelt = next_sklavenwelt;
+                                        break;
+                                    },
                                 }
-                            }
-                        },
+                            },
                     }
                 },
         }
@@ -305,6 +346,7 @@ mod odd {
         Meister,
         Gehorsam,
         SklaveJob,
+        SklavenBefehl,
     };
 
     pub enum Outcome {
@@ -344,17 +386,23 @@ mod odd {
                         match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
                             Gehorsam::Rasten =>
                                 break,
-                            Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, } => {
-                                sklavenwelt = next_sklavenwelt;
-                                for befehl in befehle {
-                                    match befehl {
-                                        Order::Is { value: 0, rueckkopplung, } =>
-                                            rueckkopplung.commit(Outcome::False).unwrap(),
-                                        Order::Is { rueckkopplung, .. } =>
-                                            rueckkopplung.commit(Outcome::NotSure).unwrap(),
+                            Gehorsam::Machen { mut befehle, } =>
+                                loop {
+                                    match befehle.befehl() {
+                                        SklavenBefehl::Mehr { befehl: Order::Is { value: 0, rueckkopplung, }, mehr_befehle, } => {
+                                            rueckkopplung.commit(Outcome::False).unwrap();
+                                            befehle = mehr_befehle;
+                                        },
+                                        SklavenBefehl::Mehr { befehl: Order::Is { rueckkopplung, .. }, mehr_befehle, } => {
+                                            rueckkopplung.commit(Outcome::NotSure).unwrap();
+                                            befehle = mehr_befehle;
+                                        },
+                                        SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
+                                            sklavenwelt = next_sklavenwelt;
+                                            break;
+                                        },
                                     }
-                                }
-                            },
+                                },
                         }
                     }
                 },
@@ -383,6 +431,7 @@ mod even {
         Meister,
         Gehorsam,
         SklaveJob,
+        SklavenBefehl,
     };
 
     pub enum Outcome {
@@ -422,17 +471,23 @@ mod even {
                         match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
                             Gehorsam::Rasten =>
                                 break,
-                            Gehorsam::Machen { befehle, sklavenwelt: next_sklavenwelt, } => {
-                                sklavenwelt = next_sklavenwelt;
-                                for befehl in befehle {
-                                    match befehl {
-                                        Order::Is { value: 0, rueckkopplung, } =>
-                                            rueckkopplung.commit(Outcome::True).unwrap(),
-                                        Order::Is { rueckkopplung, .. } =>
-                                            rueckkopplung.commit(Outcome::NotSure).unwrap(),
+                            Gehorsam::Machen { mut befehle, } =>
+                                loop {
+                                    match befehle.befehl() {
+                                        SklavenBefehl::Mehr { befehl: Order::Is { value: 0, rueckkopplung, }, mehr_befehle, } => {
+                                            rueckkopplung.commit(Outcome::True).unwrap();
+                                            befehle = mehr_befehle;
+                                        },
+                                        SklavenBefehl::Mehr { befehl: Order::Is { rueckkopplung, .. }, mehr_befehle, } => {
+                                            rueckkopplung.commit(Outcome::NotSure).unwrap();
+                                            befehle = mehr_befehle;
+                                        },
+                                        SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
+                                            sklavenwelt = next_sklavenwelt;
+                                            break;
+                                        },
                                     }
-                                }
-                            },
+                                },
                         }
                     }
                 },
