@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     ops::{
         Deref,
     },
@@ -116,5 +117,14 @@ where P: edeltraud::ThreadPool<J> + Send + 'static,
         let orders = sklave.zu_ihren_diensten()?;
         meister.befehle(orders, thread_pool)
             .map_err(Error::Meister)?;
+    }
+}
+
+impl<B, S> fmt::Debug for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>>, S: fmt::Debug {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("Rueckkopplung")
+            .field("sendegeraet", &"<Sendegeraet>")
+            .field("maybe_stamp", &self.maybe_stamp)
+            .finish()
     }
 }
