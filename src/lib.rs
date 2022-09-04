@@ -2,6 +2,10 @@
 
 use std::{
     mem,
+    ops::{
+        Deref,
+        DerefMut,
+    },
     sync::{
         Arc,
         Mutex,
@@ -168,36 +172,38 @@ impl<W, B> SklaveJob<W, B> {
                         return Err(Error::Terminated),
                 }
             } else {
+                self.maybe_sklave_job_inner =
+                    Some(sklave_job_inner);
                 return Ok(Gehorsam::Machen {
-                    befehle: SklavenBefehle { sklave_job_inner, },
+                    befehle: SklavenBefehle { sklave_job: self, },
                 });
             };
         }
     }
 
-    pub fn meister(&self) -> Result<Meister<W, B>, Error> {
+    pub fn meister(&self) -> Meister<W, B> {
         let sklave_job_inner = self.maybe_sklave_job_inner.as_ref()
-            .ok_or(Error::Terminated)?;
-        Ok(Meister {
+            .unwrap();
+        Meister {
             inner: sklave_job_inner.inner.clone(),
-        })
+        }
     }
 
-    pub fn sklavenwelt(&self) -> Result<&W, Error> {
+    pub fn sklavenwelt(&self) -> &W {
         let sklave_job_inner = self.maybe_sklave_job_inner.as_ref()
-            .ok_or(Error::Terminated)?;
-        Ok(&sklave_job_inner.welt.sklavenwelt)
+            .unwrap();
+        &sklave_job_inner.welt.sklavenwelt
     }
 
-    pub fn sklavenwelt_mut(&mut self) -> Result<&mut W, Error> {
+    pub fn sklavenwelt_mut(&mut self) -> &mut W {
         let sklave_job_inner = self.maybe_sklave_job_inner.as_mut()
-            .ok_or(Error::Terminated)?;
-        Ok(&mut sklave_job_inner.welt.sklavenwelt)
+            .unwrap();
+        &mut sklave_job_inner.welt.sklavenwelt
     }
 }
 
 pub struct SklavenBefehle<W, B> {
-    sklave_job_inner: SklaveJobInner<W, B>,
+    sklave_job: SklaveJob<W, B>,
 }
 
 pub enum SklavenBefehl<W, B> {
@@ -207,24 +213,32 @@ pub enum SklavenBefehl<W, B> {
 
 impl<W, B> SklavenBefehle<W, B> {
     pub fn befehl(mut self) -> SklavenBefehl<W, B> {
-        match self.sklave_job_inner.welt.taken_orders.pop() {
+        let inner = self.sklave_job
+            .maybe_sklave_job_inner
+            .as_mut()
+            .unwrap();
+        match inner.welt.taken_orders.pop() {
             Some(befehl) =>
                 SklavenBefehl::Mehr { befehl, mehr_befehle: self, },
             None =>
                 SklavenBefehl::Ende {
-                    sklave_job: SklaveJob {
-                        maybe_sklave_job_inner: Some(self.sklave_job_inner),
-                    },
+                    sklave_job: self.sklave_job,
                 },
         }
     }
+}
 
-    pub fn sklavenwelt(&self) -> &W {
-        &self.sklave_job_inner.welt.sklavenwelt
+impl<W, B> Deref for SklavenBefehle<W, B> {
+    type Target = SklaveJob<W, B>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sklave_job
     }
+}
 
-    pub fn sklavenwelt_mut(&mut self) -> &mut W {
-        &mut self.sklave_job_inner.welt.sklavenwelt
+impl<W, B> DerefMut for SklavenBefehle<W, B> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.sklave_job
     }
 }
 
