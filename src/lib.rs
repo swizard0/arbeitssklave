@@ -99,7 +99,7 @@ impl<W, B> Freie<W, B> {
 
     pub fn versklaven<P, J>(self, sklavenwelt: W, thread_pool: &P) -> Result<Meister<W, B>, Error>
     where P: edeltraud::ThreadPool<J>,
-          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+          J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
         let meister = Meister { inner: self.inner, };
         meister.whip(Sklavenwelt { sklavenwelt, taken_orders: Vec::new(), }, thread_pool)?;
@@ -110,14 +110,14 @@ impl<W, B> Freie<W, B> {
 impl<W, B> Meister<W, B> {
     pub fn befehl<P, J>(&self, order: B, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
-          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+          J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
         self.befehle(std::iter::once(order), thread_pool)
     }
 
     pub fn befehle<P, J, I>(&self, orders: I, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
-          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+          J: edeltraud::Job + From<SklaveJob<W, B>>,
           I: IntoIterator<Item = B>,
     {
         let prev_activity =
@@ -139,7 +139,7 @@ impl<W, B> Meister<W, B> {
 
     fn whip<P, J>(&self, welt: Sklavenwelt<W, B>, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
-          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+          J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
         let sklave_job = SklaveJob {
             maybe_sklave_job_inner: Some(SklaveJobInner {

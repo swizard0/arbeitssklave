@@ -41,9 +41,7 @@ fn umschlag_abbrechen() {
     }
 
     impl edeltraud::Job for LocalJob {
-        type Output = ();
-
-        fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
             let LocalJob(mut sklave_job) = self;
             loop {
                 match sklave_job.zu_ihren_diensten().unwrap() {
@@ -201,9 +199,7 @@ struct Stamp {
 }
 
 impl edeltraud::Job for Job {
-    type Output = ();
-
-    fn run<P>(self, thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+    fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
         match self {
             Job::Odd(job) => {
                 job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
@@ -377,9 +373,7 @@ mod odd {
     where B: From<Umschlag<Outcome, S>> + From<UmschlagAbbrechen<S>> + Send + 'static,
           S: Send + 'static,
     {
-        type Output = ();
-
-        fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
             match self {
                 Job::Sklave(mut sklave_job) => {
                     loop {
@@ -462,9 +456,7 @@ mod even {
     where B: From<Umschlag<Outcome, S>> + From<UmschlagAbbrechen<S>> + Send + 'static,
           S: Send + 'static
     {
-        type Output = ();
-
-        fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
+        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
             match self {
                 Job::Sklave(mut sklave_job) => {
                     loop {

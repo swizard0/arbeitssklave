@@ -35,6 +35,7 @@ impl<B> Deref for Sendegeraet<B> {
 pub enum Error {
     Ewig(ewig::Error),
     Meister(ArbeitssklaveError),
+    Edeltraud(edeltraud::SpawnError),
 }
 
 impl From<ewig::Error> for Error {
@@ -62,7 +63,7 @@ pub struct UmschlagAbbrechen<S> {
 impl<B> Sendegeraet<B> {
     pub fn starten<W, P, J>(freie: &Freie<W, B>, thread_pool: P) -> Result<Self, Error>
     where P: edeltraud::ThreadPool<J> + Send + 'static,
-          J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+          J: edeltraud::Job + From<SklaveJob<W, B>>,
           W: Send + 'static,
           B: Send + 'static,
     {
@@ -109,7 +110,7 @@ fn sendegeraet_loop<W, B, P, J>(
 )
     -> Result<(), Error>
 where P: edeltraud::ThreadPool<J> + Send + 'static,
-      J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
+      J: edeltraud::Job + From<SklaveJob<W, B>>,
       W: Send + 'static,
       B: Send + 'static,
 {
