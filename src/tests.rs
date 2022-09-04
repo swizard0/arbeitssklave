@@ -44,9 +44,9 @@ fn umschlag_abbrechen() {
         type Output = ();
 
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
-            let LocalJob(SklaveJob { mut sklave, mut sklavenwelt, }) = self;
+            let LocalJob(mut sklave_job) = self;
             loop {
-                match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                match sklave_job.zu_ihren_diensten().unwrap() {
                     Gehorsam::Rasten =>
                         break,
                     Gehorsam::Machen { mut befehle, } =>
@@ -59,8 +59,8 @@ fn umschlag_abbrechen() {
                                         .ok();
                                     befehle = mehr_befehle;
                                 },
-                                SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
-                                    sklavenwelt = next_sklavenwelt;
+                                SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
+                                    sklave_job = next_sklave_job;
                                     break;
                                 },
                             }
@@ -211,9 +211,9 @@ impl edeltraud::Job for Job {
             Job::Even(job) => {
                 job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
             },
-            Job::Driver(SklaveJob { mut sklave, mut sklavenwelt, }) =>
+            Job::Driver(mut sklave_job) =>
                 loop {
-                    match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                    match sklave_job.zu_ihren_diensten().unwrap() {
                         Gehorsam::Rasten =>
                             break,
                         Gehorsam::Machen { mut befehle, } =>
@@ -323,8 +323,8 @@ impl edeltraud::Job for Job {
                                         ..
                                     } =>
                                         panic!("unexpected UmschlagAbbrechen for current_value = {current_value:?} current_guess = {current_guess:?}"),
-                                    SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
-                                        sklavenwelt = next_sklavenwelt;
+                                    SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
+                                        sklave_job = next_sklave_job;
                                         break;
                                     },
                                 }
@@ -381,9 +381,9 @@ mod odd {
 
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
             match self {
-                Job::Sklave(SklaveJob { mut sklave, mut sklavenwelt, }) => {
+                Job::Sklave(mut sklave_job) => {
                     loop {
-                        match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                        match sklave_job.zu_ihren_diensten().unwrap() {
                             Gehorsam::Rasten =>
                                 break,
                             Gehorsam::Machen { mut befehle, } =>
@@ -397,8 +397,8 @@ mod odd {
                                             rueckkopplung.commit(Outcome::NotSure).unwrap();
                                             befehle = mehr_befehle;
                                         },
-                                        SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
-                                            sklavenwelt = next_sklavenwelt;
+                                        SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
+                                            sklave_job = next_sklave_job;
                                             break;
                                         },
                                     }
@@ -466,9 +466,9 @@ mod even {
 
         fn run<P>(self, _thread_pool: &P) -> Self::Output where P: edeltraud::ThreadPool<Self> {
             match self {
-                Job::Sklave(SklaveJob { mut sklave, mut sklavenwelt, }) => {
+                Job::Sklave(mut sklave_job) => {
                     loop {
-                        match sklave.zu_ihren_diensten(sklavenwelt).unwrap() {
+                        match sklave_job.zu_ihren_diensten().unwrap() {
                             Gehorsam::Rasten =>
                                 break,
                             Gehorsam::Machen { mut befehle, } =>
@@ -482,8 +482,8 @@ mod even {
                                             rueckkopplung.commit(Outcome::NotSure).unwrap();
                                             befehle = mehr_befehle;
                                         },
-                                        SklavenBefehl::Ende { sklavenwelt: next_sklavenwelt, } => {
-                                            sklavenwelt = next_sklavenwelt;
+                                        SklavenBefehl::Ende { sklave_job: next_sklave_job, } => {
+                                            sklave_job = next_sklave_job;
                                             break;
                                         },
                                     }

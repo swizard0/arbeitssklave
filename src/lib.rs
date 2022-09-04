@@ -2,10 +2,6 @@
 
 use std::{
     mem,
-    ops::{
-        Deref,
-        DerefMut,
-    },
     sync::{
         Arc,
         Mutex,
@@ -34,13 +30,18 @@ impl<W, B> Clone for Meister<W, B> {
     }
 }
 
-pub struct Sklave<W, B> {
-    maybe_inner: Option<Arc<Inner<W, B>>>,
+pub struct SklaveJob<W, B> {
+    maybe_sklave_job_inner: Option<SklaveJobInner<W, B>>,
 }
 
-pub struct SklaveJob<W, B> {
-    pub sklave: Sklave<W, B>,
-    pub sklavenwelt: Sklavenwelt<W, B>,
+struct SklaveJobInner<W, B> {
+    inner: Arc<Inner<W, B>>,
+    welt: Sklavenwelt<W, B>,
+}
+
+struct Sklavenwelt<W, B> {
+    sklavenwelt: W,
+    taken_orders: Vec<B>,
 }
 
 struct Inner<W, B> {
@@ -67,11 +68,6 @@ pub enum Gehorsam<W, B> {
         befehle: SklavenBefehle<W, B>,
     },
     Rasten,
-}
-
-pub struct Sklavenwelt<W, B> {
-    sklavenwelt: W,
-    taken_orders: Vec<B>,
 }
 
 #[derive(Debug)]
@@ -132,110 +128,112 @@ impl<W, B> Meister<W, B> {
         match prev_activity {
             Activity::Work =>
                 Ok(()),
-            Activity::Rest(sklavenwelt) =>
-                self.whip(sklavenwelt, thread_pool),
+            Activity::Rest(welt) =>
+                self.whip(welt, thread_pool),
         }
     }
 
-    fn whip<P, J>(&self, sklavenwelt: Sklavenwelt<W, B>, thread_pool: &P) -> Result<(), Error>
+    fn whip<P, J>(&self, welt: Sklavenwelt<W, B>, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job<Output = ()> + From<SklaveJob<W, B>>,
     {
         let sklave_job = SklaveJob {
-            sklave: Sklave {
-                maybe_inner: Some(self.inner.clone()),
-            },
-            sklavenwelt,
+            maybe_sklave_job_inner: Some(SklaveJobInner {
+                inner: self.inner.clone(),
+                welt,
+            }),
         };
         edeltraud::job(thread_pool, sklave_job)
             .map_err(Error::Edeltraud)
     }
 }
 
-impl<W, B> Sklave<W, B> {
-    pub fn zu_ihren_diensten(&mut self, mut sklavenwelt: Sklavenwelt<W, B>) -> Result<Gehorsam<W, B>, Error> {
+impl<W, B> SklaveJob<W, B> {
+    pub fn zu_ihren_diensten(mut self) -> Result<Gehorsam<W, B>, Error> {
+        let mut sklave_job_inner = self.maybe_sklave_job_inner
+            .take()
+            .ok_or(Error::Terminated)?;
         loop {
-            if sklavenwelt.taken_orders.is_empty() {
-                let inner = self.maybe_inner.take()
-                    .ok_or(Error::Terminated)?;
-                match &mut *inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
+            if sklave_job_inner.welt.taken_orders.is_empty() {
+                match &mut *sklave_job_inner.inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
                     InnerState::Active(state) if state.orders.is_empty() => {
                         assert!(matches!(state.activity, Activity::Work));
-                        state.activity = Activity::Rest(sklavenwelt);
+                        state.activity = Activity::Rest(sklave_job_inner.welt);
                         return Ok(Gehorsam::Rasten);
                     },
                     InnerState::Active(InnerStateActive { orders, .. }) => {
-                        mem::swap(orders, &mut sklavenwelt.taken_orders);
+                        mem::swap(orders, &mut sklave_job_inner.welt.taken_orders);
                     },
                     InnerState::Terminated =>
                         return Err(Error::Terminated),
                 }
-                self.maybe_inner = Some(inner);
             } else {
                 return Ok(Gehorsam::Machen {
-                    befehle: SklavenBefehle { sklavenwelt, },
+                    befehle: SklavenBefehle { sklave_job_inner, },
                 });
-            }
+            };
         }
     }
 
     pub fn meister(&self) -> Result<Meister<W, B>, Error> {
-        let inner = self.maybe_inner.as_ref()
+        let sklave_job_inner = self.maybe_sklave_job_inner.as_ref()
             .ok_or(Error::Terminated)?;
         Ok(Meister {
-            inner: inner.clone(),
+            inner: sklave_job_inner.inner.clone(),
         })
+    }
+
+    pub fn sklavenwelt(&self) -> Result<&W, Error> {
+        let sklave_job_inner = self.maybe_sklave_job_inner.as_ref()
+            .ok_or(Error::Terminated)?;
+        Ok(&sklave_job_inner.welt.sklavenwelt)
+    }
+
+    pub fn sklavenwelt_mut(&mut self) -> Result<&mut W, Error> {
+        let sklave_job_inner = self.maybe_sklave_job_inner.as_mut()
+            .ok_or(Error::Terminated)?;
+        Ok(&mut sklave_job_inner.welt.sklavenwelt)
     }
 }
 
 pub struct SklavenBefehle<W, B> {
-    sklavenwelt: Sklavenwelt<W, B>,
+    sklave_job_inner: SklaveJobInner<W, B>,
 }
 
 pub enum SklavenBefehl<W, B> {
     Mehr { befehl: B, mehr_befehle: SklavenBefehle<W, B>, },
-    Ende { sklavenwelt: Sklavenwelt<W, B>, },
+    Ende { sklave_job: SklaveJob<W, B>, },
 }
 
 impl<W, B> SklavenBefehle<W, B> {
     pub fn befehl(mut self) -> SklavenBefehl<W, B> {
-        match self.sklavenwelt.taken_orders.pop() {
+        match self.sklave_job_inner.welt.taken_orders.pop() {
             Some(befehl) =>
                 SklavenBefehl::Mehr { befehl, mehr_befehle: self, },
             None =>
-                SklavenBefehl::Ende { sklavenwelt: self.sklavenwelt, },
+                SklavenBefehl::Ende {
+                    sklave_job: SklaveJob {
+                        maybe_sklave_job_inner: Some(self.sklave_job_inner),
+                    },
+                },
         }
     }
 
-    pub fn sklavenwelt(&self) -> &Sklavenwelt<W, B> {
-        &self.sklavenwelt
+    pub fn sklavenwelt(&self) -> &W {
+        &self.sklave_job_inner.welt.sklavenwelt
     }
 
-    pub fn sklavenwelt_mut(&mut self) -> &mut Sklavenwelt<W, B> {
-        &mut self.sklavenwelt
+    pub fn sklavenwelt_mut(&mut self) -> &mut W {
+        &mut self.sklave_job_inner.welt.sklavenwelt
     }
 }
 
-impl<W, B> Drop for Sklave<W, B> {
+impl<W, B> Drop for SklaveJob<W, B> {
     fn drop(&mut self) {
-        if let Some(inner) = self.maybe_inner.take() {
-            if let Ok(mut state) = inner.state.lock() {
+        if let Some(sklave_job_inner) = self.maybe_sklave_job_inner.take() {
+            if let Ok(mut state) = sklave_job_inner.inner.state.lock() {
                 *state = InnerState::Terminated;
             }
         }
-    }
-}
-
-impl<W, B> Deref for Sklavenwelt<W, B> {
-    type Target = W;
-
-    fn deref(&self) -> &Self::Target {
-        &self.sklavenwelt
-    }
-}
-
-impl<W, B> DerefMut for Sklavenwelt<W, B> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.sklavenwelt
     }
 }
