@@ -1,10 +1,9 @@
 use std::{
     io,
-    mem,
     sync::{
+        atomic,
         Arc,
         Mutex,
-        Condvar,
     },
     thread,
 };
@@ -29,27 +28,19 @@ impl<B, E> Clone for Meister<B, E> {
 
 pub struct Sklave<B, E> {
     inner: Arc<Inner<B, E>>,
-    taken_orders: Vec<B>,
+    sched_worker: crossbeam::deque::Worker<B>,
 }
 
 struct Inner<B, E> {
-    state: Mutex<InnerState<B, E>>,
-    condvar: Condvar,
-}
-
-enum InnerState<B, E> {
-    Active(InnerStateActive<B>),
-    Terminated(Option<E>),
-}
-
-struct InnerStateActive<B> {
-    orders: Vec<B>,
+    injector: crossbeam::deque::Injector<B>,
+    is_waiting: atomic::AtomicBool,
+    is_terminated: atomic::AtomicBool,
+    maybe_error: Mutex<Option<E>>,
 }
 
 #[derive(Debug)]
 pub enum Error {
     ThreadSpawn(io::Error),
-    MutexIsPoisoned,
     Terminated,
 }
 
@@ -57,16 +48,16 @@ impl<B, E> Freie<B, E> {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Inner {
-                state: Mutex::new(InnerState::Active(InnerStateActive {
-                    orders: Vec::new(),
-                })),
-                condvar: Condvar::new(),
+                injector: crossbeam::deque::Injector::new(),
+                is_waiting: atomic::AtomicBool::new(false),
+                is_terminated: atomic::AtomicBool::new(false),
+                maybe_error: Mutex::new(None),
             }),
         }
     }
 
     pub fn versklaven<F>(self, sklave_job: F) -> Result<Meister<B, E>, E>
-    where F: FnOnce(&mut Sklave<B, E>) -> Result<(), E> + Send + 'static,
+    where F: FnOnce(&Sklave<B, E>) -> Result<(), E> + Send + 'static,
           B: Send + 'static,
           E: From<Error> + Send + 'static,
     {
@@ -74,20 +65,31 @@ impl<B, E> Freie<B, E> {
     }
 
     pub fn versklaven_als<F>(self, thread_name: String, sklave_job: F) -> Result<Meister<B, E>, E>
-    where F: FnOnce(&mut Sklave<B, E>) -> Result<(), E> + Send + 'static,
+    where F: FnOnce(&Sklave<B, E>) -> Result<(), E> + Send + 'static,
           B: Send + 'static,
           E: From<Error> + Send + 'static,
     {
-        let mut sklave = Sklave {
+        let sklave = Sklave {
             inner: self.inner.clone(),
-            taken_orders: Vec::new(),
+            sched_worker: crossbeam::deque::Worker::new_lifo(),
         };
         let join_handle = thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
-                if let Err(error) = sklave_job(&mut sklave) {
-                    if let Ok(mut locked_state) = sklave.inner.state.lock() {
-                        *locked_state = InnerState::Terminated(Some(error));
+                let _drop_bomb = DropBomp { is_terminated: &sklave.inner.is_terminated, };
+                if let Err(error) = sklave_job(&sklave) {
+                    if let Ok(mut locked_maybe_error) = sklave.inner.maybe_error.lock() {
+                        *locked_maybe_error = Some(error);
+                    }
+                }
+
+                struct DropBomp<'a> {
+                    is_terminated: &'a atomic::AtomicBool,
+                }
+
+                impl<'a> Drop for DropBomp<'a> {
+                    fn drop(&mut self) {
+                        self.is_terminated.store(true, atomic::Ordering::SeqCst);
                     }
                 }
             })
@@ -103,12 +105,8 @@ impl<B, E> Drop for Meister<B, E> {
     fn drop(&mut self) {
         if let Some(join_handle_arc) = self.join_handle.take() {
             if let Ok(join_handle) = Arc::try_unwrap(join_handle_arc) {
-                if let Ok(mut locked_state) = self.inner.state.lock() {
-                    if let InnerState::Active(..) = &*locked_state {
-                        *locked_state = InnerState::Terminated(None);
-                        self.inner.condvar.notify_one();
-                    }
-                }
+                self.inner.is_terminated.store(true, atomic::Ordering::SeqCst);
+                join_handle.thread().unpark();
                 join_handle.join().ok();
             }
         }
@@ -121,43 +119,81 @@ impl<B, E> Meister<B, E> where E: From<Error> {
     }
 
     pub fn befehle<I>(&self, orders: I) -> Result<(), E> where I: IntoIterator<Item = B> {
-        match *self.inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
-            InnerState::Active(ref mut state) => {
-                state.orders.extend(orders);
-                self.inner.condvar.notify_one();
-                Ok(())
-            },
-            InnerState::Terminated(ref mut maybe_error) =>
-                if let Some(error) = maybe_error.take() {
+        if self.inner.is_terminated.load(atomic::Ordering::SeqCst) {
+            return if let Ok(mut locked_maybe_error) = self.inner.maybe_error.lock() {
+                if let Some(error) = locked_maybe_error.take() {
                     Err(error)
                 } else {
-                    Err(Error::MutexIsPoisoned.into())
-                },
+                    Err(Error::Terminated.into())
+                }
+            } else {
+                Err(Error::Terminated.into())
+            }
         }
+
+        for order in orders {
+            self.inner.injector.push(order);
+        }
+        if let Some(join_handle) = self.join_handle.as_ref() {
+            if self.inner.is_waiting.load(atomic::Ordering::SeqCst) {
+                join_handle.thread().unpark();
+            }
+        }
+
+        Ok(())
     }
 }
 
 impl<B, E> Sklave<B, E> where E: From<Error> {
-    pub fn zu_ihren_diensten(&mut self) -> Result<impl Iterator<Item = B> + '_, E> {
-        let mut locked_state = self.inner.state.lock()
-            .map_err(|_| Error::MutexIsPoisoned)?;
-        loop {
-            match &mut *locked_state {
-                InnerState::Active(InnerStateActive { orders, }) if !orders.is_empty() => {
-                    mem::swap(orders, &mut self.taken_orders);
-                    return Ok(self.taken_orders.drain(..));
+    pub fn zu_ihren_diensten(&self) -> Result<impl Iterator<Item = B> + '_, E> {
+        let backoff = crossbeam::utils::Backoff::new();
+        let mut steal = crossbeam::deque::Steal::Retry;
+        'outer: loop {
+            if self.inner.is_terminated.load(atomic::Ordering::SeqCst) {
+                return Err(Error::Terminated.into());
+            }
+
+            match steal {
+                crossbeam::deque::Steal::Empty => {
+                    // nothing to do, sleeping
+                    if backoff.is_completed() {
+                        self.inner.is_waiting.store(true, atomic::Ordering::SeqCst);
+                        loop {
+                            thread::park();
+                            if !self.inner.is_waiting.load(atomic::Ordering::SeqCst) ||
+                                self.inner.is_terminated.load(atomic::Ordering::SeqCst)
+                            {
+                                break;
+                            }
+                        }
+                    } else {
+                        backoff.snooze();
+                    }
+                    steal = crossbeam::deque::Steal::Retry;
+                    continue 'outer;
                 },
-                InnerState::Active(..) => {
-                    locked_state = self.inner.condvar.wait(locked_state)
-                        .map_err(|_| Error::MutexIsPoisoned)?;
-                },
-                InnerState::Terminated(maybe_error) =>
-                    return Err(match maybe_error.take() {
-                        None =>
-                            Error::Terminated.into(),
-                        Some(error) =>
-                            error,
-                    }),
+                crossbeam::deque::Steal::Success(job) =>
+                    return Ok(std::iter::once(job)),
+                crossbeam::deque::Steal::Retry =>
+                    (),
+            }
+
+            // first try to acquire a job from the local queue
+            if let Some(job) = self.sched_worker.pop() {
+                steal = crossbeam::deque::Steal::Success(job);
+                continue 'outer;
+            }
+
+            // finally try to steal a batch from the injector
+            match self.inner.injector.steal_batch_and_pop(&self.sched_worker) {
+                crossbeam::deque::Steal::Empty =>
+                    (),
+                crossbeam::deque::Steal::Success(job) => {
+                    steal = crossbeam::deque::Steal::Success(job);
+                    continue 'outer;
+                }
+                crossbeam::deque::Steal::Retry =>
+                    steal = crossbeam::deque::Steal::Retry,
             }
         }
     }

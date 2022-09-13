@@ -104,7 +104,7 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
 }
 
 fn sendegeraet_loop<W, B, P, J>(
-    sklave: &mut ewig::Sklave<B, Error>,
+    sklave: &ewig::Sklave<B, Error>,
     meister: &Meister<W, B>,
     thread_pool: &P,
 )
