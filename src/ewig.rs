@@ -150,11 +150,11 @@ impl<B, E> Sklave<B, E> where E: From<Error> {
                 return Err(Error::Terminated.into());
             }
 
+            self.inner.is_waiting.store(true, atomic::Ordering::SeqCst);
             match self.inner.orders.pop() {
                 None => {
                     // nothing to do, sleeping
                     if backoff.is_completed() {
-                        self.inner.is_waiting.store(true, atomic::Ordering::SeqCst);
                         loop {
                             thread::park();
                             if !self.inner.is_waiting.load(atomic::Ordering::SeqCst) ||
@@ -168,8 +168,10 @@ impl<B, E> Sklave<B, E> where E: From<Error> {
                     }
                     continue;
                 },
-                Some(order) =>
-                    return Ok(std::iter::once(order)),
+                Some(order) => {
+                    self.inner.is_waiting.store(false, atomic::Ordering::SeqCst);
+                    return Ok(std::iter::once(order));
+                },
             }
         }
     }
