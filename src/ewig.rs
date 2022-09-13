@@ -28,11 +28,10 @@ impl<B, E> Clone for Meister<B, E> {
 
 pub struct Sklave<B, E> {
     inner: Arc<Inner<B, E>>,
-    sched_worker: crossbeam::deque::Worker<B>,
 }
 
 struct Inner<B, E> {
-    injector: crossbeam::deque::Injector<B>,
+    orders: crossbeam::queue::SegQueue<B>,
     is_waiting: atomic::AtomicBool,
     is_terminated: atomic::AtomicBool,
     maybe_error: Mutex<Option<E>>,
@@ -48,7 +47,7 @@ impl<B, E> Freie<B, E> {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Inner {
-                injector: crossbeam::deque::Injector::new(),
+                orders: crossbeam::queue::SegQueue::new(),
                 is_waiting: atomic::AtomicBool::new(false),
                 is_terminated: atomic::AtomicBool::new(false),
                 maybe_error: Mutex::new(None),
@@ -71,7 +70,6 @@ impl<B, E> Freie<B, E> {
     {
         let sklave = Sklave {
             inner: self.inner.clone(),
-            sched_worker: crossbeam::deque::Worker::new_lifo(),
         };
         let join_handle = thread::Builder::new()
             .name(thread_name)
@@ -132,10 +130,10 @@ impl<B, E> Meister<B, E> where E: From<Error> {
         }
 
         for order in orders {
-            self.inner.injector.push(order);
+            self.inner.orders.push(order);
         }
         if let Some(join_handle) = self.join_handle.as_ref() {
-            if self.inner.is_waiting.load(atomic::Ordering::SeqCst) {
+            if self.inner.is_waiting.swap(false, atomic::Ordering::SeqCst) {
                 join_handle.thread().unpark();
             }
         }
@@ -147,14 +145,13 @@ impl<B, E> Meister<B, E> where E: From<Error> {
 impl<B, E> Sklave<B, E> where E: From<Error> {
     pub fn zu_ihren_diensten(&self) -> Result<impl Iterator<Item = B> + '_, E> {
         let backoff = crossbeam::utils::Backoff::new();
-        let mut steal = crossbeam::deque::Steal::Retry;
-        'outer: loop {
+        loop {
             if self.inner.is_terminated.load(atomic::Ordering::SeqCst) {
                 return Err(Error::Terminated.into());
             }
 
-            match steal {
-                crossbeam::deque::Steal::Empty => {
+            match self.inner.orders.pop() {
+                None => {
                     // nothing to do, sleeping
                     if backoff.is_completed() {
                         self.inner.is_waiting.store(true, atomic::Ordering::SeqCst);
@@ -169,31 +166,10 @@ impl<B, E> Sklave<B, E> where E: From<Error> {
                     } else {
                         backoff.snooze();
                     }
-                    steal = crossbeam::deque::Steal::Retry;
-                    continue 'outer;
+                    continue;
                 },
-                crossbeam::deque::Steal::Success(job) =>
-                    return Ok(std::iter::once(job)),
-                crossbeam::deque::Steal::Retry =>
-                    (),
-            }
-
-            // first try to acquire a job from the local queue
-            if let Some(job) = self.sched_worker.pop() {
-                steal = crossbeam::deque::Steal::Success(job);
-                continue 'outer;
-            }
-
-            // finally try to steal a batch from the injector
-            match self.inner.injector.steal_batch_and_pop(&self.sched_worker) {
-                crossbeam::deque::Steal::Empty =>
-                    (),
-                crossbeam::deque::Steal::Success(job) => {
-                    steal = crossbeam::deque::Steal::Success(job);
-                    continue 'outer;
-                }
-                crossbeam::deque::Steal::Retry =>
-                    steal = crossbeam::deque::Steal::Retry,
+                Some(order) =>
+                    return Ok(std::iter::once(order)),
             }
         }
     }
