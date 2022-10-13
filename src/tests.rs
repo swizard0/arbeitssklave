@@ -238,7 +238,7 @@ impl edeltraud::Job for Job {
                                     },
                                     SklavenBefehl::Mehr {
                                         befehl: Order::OddUmschlag(Umschlag {
-                                            payload: odd::Outcome::False,
+                                            inhalt: odd::Outcome::False,
                                             stamp: Stamp { current_guess, reply_tx, .. },
                                         }),
                                         mehr_befehle,
@@ -248,7 +248,7 @@ impl edeltraud::Job for Job {
                                     },
                                     SklavenBefehl::Mehr {
                                         befehl: Order::OddUmschlag(Umschlag {
-                                            payload: odd::Outcome::NotSure,
+                                            inhalt: odd::Outcome::NotSure,
                                             stamp: Stamp { current_value, current_guess, reply_tx, },
                                         }),
                                         mehr_befehle,
@@ -275,7 +275,7 @@ impl edeltraud::Job for Job {
                                     },
                                     SklavenBefehl::Mehr {
                                         befehl: Order::EvenUmschlag(Umschlag {
-                                            payload: even::Outcome::True,
+                                            inhalt: even::Outcome::True,
                                             stamp: Stamp { current_guess, reply_tx, .. },
                                         }),
                                         mehr_befehle,
@@ -285,7 +285,7 @@ impl edeltraud::Job for Job {
                                     },
                                     SklavenBefehl::Mehr {
                                         befehl: Order::EvenUmschlag(Umschlag {
-                                            payload: even::Outcome::NotSure,
+                                            inhalt: even::Outcome::NotSure,
                                             stamp: Stamp {
                                                 current_value,
                                                 current_guess,

@@ -43,6 +43,12 @@ pub enum Error {
     Terminated,
 }
 
+impl<B, E> Default for Freie<B, E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<B, E> Freie<B, E> {
     pub fn new() -> Self {
         Self {

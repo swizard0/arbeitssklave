@@ -81,6 +81,12 @@ pub enum Error {
     MutexIsPoisoned,
 }
 
+impl<W, B> Default for Freie<W, B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<W, B> Freie<W, B> {
     pub fn new() -> Self {
         Self {

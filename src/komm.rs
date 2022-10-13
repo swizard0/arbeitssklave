@@ -50,8 +50,8 @@ pub struct Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
 }
 
 #[derive(Debug)]
-pub struct Umschlag<T, S> {
-    pub payload: T,
+pub struct Umschlag<I, S> {
+    pub inhalt: I,
     pub stamp: S,
 }
 
@@ -85,9 +85,9 @@ impl<B> Sendegeraet<B> {
 }
 
 impl<B, S> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
-    pub fn commit<T>(mut self, payload: T) -> Result<(), Error> where B: From<Umschlag<T, S>> {
+    pub fn commit<I>(mut self, inhalt: I) -> Result<(), Error> where B: From<Umschlag<I, S>> {
         let stamp = self.maybe_stamp.take().unwrap();
-        let umschlag = Umschlag { payload, stamp, };
+        let umschlag = Umschlag { inhalt, stamp, };
         let order = umschlag.into();
         self.sendegeraet.befehl(order)
     }
@@ -101,6 +101,15 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
             self.sendegeraet.befehl(order).ok();
         }
     }
+}
+
+pub trait RueckkopplungWeg
+where Self::Befehl: From<UmschlagAbbrechen<Self::Stamp>>,
+      Self::Befehl: From<Umschlag<Self::Inhalt, Self::Stamp>>,
+{
+    type Stamp;
+    type Inhalt;
+    type Befehl;
 }
 
 fn sendegeraet_loop<W, B, P, J>(
