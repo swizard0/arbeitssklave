@@ -41,7 +41,7 @@ fn umschlag_abbrechen() {
     }
 
     impl edeltraud::Job for LocalJob {
-        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
+        fn run<P, J>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<J>, J: edeltraud::Job + From<Self> {
             let LocalJob(mut sklave_job) = self;
             loop {
                 match sklave_job.zu_ihren_diensten().unwrap() {
@@ -199,7 +199,7 @@ struct Stamp {
 }
 
 impl edeltraud::Job for Job {
-    fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
+    fn run<P, J>(self, thread_pool: &P) where P: edeltraud::ThreadPool<J>, J: edeltraud::Job + From<Self> {
         match self {
             Job::Odd(job) => {
                 job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
@@ -231,7 +231,7 @@ impl edeltraud::Job for Job {
                                                             reply_tx,
                                                         }),
                                                 },
-                                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_, _>>::new(thread_pool),
+                                                &edeltraud::ThreadPoolMap::new(thread_pool),
                                             )
                                             .unwrap();
                                         befehle = mehr_befehle;
@@ -373,7 +373,7 @@ mod odd {
     where B: From<Umschlag<Outcome, S>> + From<UmschlagAbbrechen<S>> + Send + 'static,
           S: Send + 'static,
     {
-        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
+        fn run<P, J>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<J>, J: edeltraud::Job + From<Self> {
             match self {
                 Job::Sklave(mut sklave_job) => {
                     loop {
@@ -456,7 +456,7 @@ mod even {
     where B: From<Umschlag<Outcome, S>> + From<UmschlagAbbrechen<S>> + Send + 'static,
           S: Send + 'static
     {
-        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
+        fn run<P, J>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<J>, J: edeltraud::Job + From<Self> {
             match self {
                 Job::Sklave(mut sklave_job) => {
                     loop {
