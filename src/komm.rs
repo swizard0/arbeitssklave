@@ -103,35 +103,17 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
     }
 }
 
-pub struct RueckkopplungGabel<BA, SA, BB, SB> where BA: From<UmschlagAbbrechen<SA>>, BB: From<UmschlagAbbrechen<SB>> {
-    inner: RueckkopplungGabelInner<BA, SA, BB, SB>
+pub trait Echo<I> {
+    type Error;
+
+    fn commit_echo(self, inhalt: I) -> Result<(), Self::Error>;
 }
 
-enum RueckkopplungGabelInner<BA, SA, BB, SB> where BA: From<UmschlagAbbrechen<SA>>, BB: From<UmschlagAbbrechen<SB>> {
-    Eins(Rueckkopplung<BA, SA>),
-    Zwei(Rueckkopplung<BB, SB>),
-}
+impl<B, I, S> Echo<I> for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>>, B: From<Umschlag<I, S>> {
+    type Error = Error;
 
-impl<BA, SA, BB, SB> RueckkopplungGabel<BA, SA, BB, SB> where BA: From<UmschlagAbbrechen<SA>>, BB: From<UmschlagAbbrechen<SB>> {
-    pub fn eins(sendegeraet: &Sendegeraet<BA>, stamp: SA) -> RueckkopplungGabel<BA, SA, BB, SB> {
-        RueckkopplungGabel {
-            inner: RueckkopplungGabelInner::Eins(sendegeraet.rueckkopplung(stamp)),
-        }
-    }
-
-    pub fn zwei(sendegeraet: &Sendegeraet<BB>, stamp: SB) -> RueckkopplungGabel<BA, SA, BB, SB> {
-        RueckkopplungGabel {
-            inner: RueckkopplungGabelInner::Zwei(sendegeraet.rueckkopplung(stamp)),
-        }
-    }
-
-    pub fn commit<I>(self, inhalt: I) -> Result<(), Error> where BA: From<Umschlag<I, SA>>, BB: From<Umschlag<I, SB>> {
-        match self.inner {
-            RueckkopplungGabelInner::Eins(rueckkopplung) =>
-                rueckkopplung.commit(inhalt),
-            RueckkopplungGabelInner::Zwei(rueckkopplung) =>
-                rueckkopplung.commit(inhalt),
-        }
+    fn commit_echo(self, inhalt: I) -> Result<(), Self::Error> {
+        self.commit(inhalt)
     }
 }
 
