@@ -117,6 +117,23 @@ impl<B, I, S> Echo<I> for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>
     }
 }
 
+pub enum Streamzeug<Z, ME> {
+    NichtMehr,
+    Zeug {
+        zeug: Z,
+        mehr_stream: ME,
+    },
+}
+
+pub trait Stream<Z, ME>: Echo<Streamzeug<Z, ME>> + Sized where ME: Echo<Self> { }
+
+impl<B, Z, S, ME> Stream<Z, ME> for Rueckkopplung<B, S>
+where B: From<UmschlagAbbrechen<S>>,
+      B: From<Umschlag<Streamzeug<Z, ME>, S>>,
+      ME: Echo<Self>,
+{
+}
+
 pub trait RueckkopplungWeg
 where Self::Befehl: From<UmschlagAbbrechen<Self::Stamp>>,
       Self::Befehl: From<Umschlag<Self::Inhalt, Self::Stamp>>,
