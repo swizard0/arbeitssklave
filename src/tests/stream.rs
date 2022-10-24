@@ -246,7 +246,7 @@ mod stream {
         Sklave(SklaveJob<Welt<S>, Order<S>>),
     }
 
-    impl<S> From<SklaveJob<Welt<S>, Order<S>>> for Job<S> where S: komm::Stream<isize, StreamNext<S>> {
+    impl<S> From<SklaveJob<Welt<S>, Order<S>>> for Job<S> {
         fn from(sklave_job: SklaveJob<Welt<S>, Order<S>>) -> Job<S> {
             Job::Sklave(sklave_job)
         }
