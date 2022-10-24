@@ -103,17 +103,17 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
     }
 }
 
-pub trait Echo<I> {
-    type Error;
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct EchoError;
 
-    fn commit_echo(self, inhalt: I) -> Result<(), Self::Error>;
+pub trait Echo<I> {
+    fn commit_echo(self, inhalt: I) -> Result<(), EchoError>;
 }
 
 impl<B, I, S> Echo<I> for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>>, B: From<Umschlag<I, S>> {
-    type Error = Error;
-
-    fn commit_echo(self, inhalt: I) -> Result<(), Self::Error> {
+    fn commit_echo(self, inhalt: I) -> Result<(), EchoError> {
         self.commit(inhalt)
+            .map_err(|_error| EchoError)
     }
 }
 

@@ -232,10 +232,8 @@ mod stream {
     }
 
     impl<S> komm::Echo<S> for StreamNext<S> {
-        type Error = komm::Error;
-
-        fn commit_echo(self, inhalt: S) -> Result<(), Self::Error> {
-            self.rueckkopplung.commit(inhalt)
+        fn commit_echo(self, inhalt: S) -> Result<(), komm::EchoError> {
+            self.rueckkopplung.commit_echo(inhalt)
         }
     }
 
@@ -254,7 +252,7 @@ mod stream {
         }
     }
 
-    impl<S> edeltraud::Job for Job<S> where S: komm::Stream<isize, StreamNext<S>, Error = komm::Error> + Send + 'static {
+    impl<S> edeltraud::Job for Job<S> where S: komm::Stream<isize, StreamNext<S>> + Send + 'static {
         fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
             match self {
                 Job::Sklave(mut sklave_job) => {
@@ -332,7 +330,7 @@ mod stream {
 
     pub fn start<P, S>(thread_pool: &P) -> Meister<Welt<S>, Order<S>>
     where P: edeltraud::ThreadPool<Job<S>> + Clone + Send + 'static,
-          S: komm::Stream<isize, StreamNext<S>, Error = komm::Error> + Send + 'static,
+          S: komm::Stream<isize, StreamNext<S>> + Send + 'static,
     {
         let freie = Freie::new();
         let sendegeraet =

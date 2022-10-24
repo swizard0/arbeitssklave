@@ -309,7 +309,7 @@ mod odd {
         }
     }
 
-    impl<E> edeltraud::Job for Job<E> where E: komm::Echo<Outcome, Error = komm::Error> + Send + 'static {
+    impl<E> edeltraud::Job for Job<E> where E: komm::Echo<Outcome> + Send + 'static {
         fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
             match self {
                 Job::Sklave(mut sklave_job) => {
@@ -349,7 +349,7 @@ mod odd {
 
     pub fn start<P, E>(thread_pool: &P) -> Meister<Welt, Order<E>>
     where P: edeltraud::ThreadPool<Job<E>>,
-          E: komm::Echo<Outcome, Error = komm::Error> + Send + 'static,
+          E: komm::Echo<Outcome> + Send + 'static,
     {
         let freie = Freie::new();
         freie.versklaven(Welt, thread_pool).unwrap()
@@ -390,7 +390,7 @@ mod even {
         }
     }
 
-    impl<E> edeltraud::Job for Job<E> where E: komm::Echo<Outcome, Error = komm::Error> + Send + 'static {
+    impl<E> edeltraud::Job for Job<E> where E: komm::Echo<Outcome> + Send + 'static {
         fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
             match self {
                 Job::Sklave(mut sklave_job) => {
@@ -430,7 +430,7 @@ mod even {
 
     pub fn start<P, E>(thread_pool: &P) -> Meister<Welt, Order<E>>
     where P: edeltraud::ThreadPool<Job<E>>,
-          E: komm::Echo<Outcome, Error = komm::Error> + Send + 'static,
+          E: komm::Echo<Outcome> + Send + 'static,
     {
         let freie = Freie::new();
         freie.versklaven(Welt, thread_pool).unwrap()
