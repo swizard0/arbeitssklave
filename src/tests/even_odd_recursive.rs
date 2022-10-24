@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[test]
-fn even_odd_recursive() {
+fn basic() {
     let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
         .build()
         .unwrap();

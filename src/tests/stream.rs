@@ -22,7 +22,7 @@ use crate::{
 };
 
 #[test]
-fn stream() {
+fn basic() {
     enum LocalOrder {
         Start { start: isize, end: isize, },
         GotAnItem(Umschlag<Streamzeug<isize, stream::StreamNext<Stream>>, LocalStamp>),
@@ -182,6 +182,12 @@ fn stream() {
 
     meister.befehl(LocalOrder::Start { start: 3, end: 6, }, &thread_pool).unwrap();
     assert_eq!(rx.recv(), Ok(vec![3, 4, 5]));
+    meister.befehl(LocalOrder::Start { start: -1, end: 1, }, &thread_pool).unwrap();
+    assert_eq!(rx.recv(), Ok(vec![-1, 0]));
+    meister.befehl(LocalOrder::Start { start: 9, end: 10, }, &thread_pool).unwrap();
+    assert_eq!(rx.recv(), Ok(vec![9]));
+    meister.befehl(LocalOrder::Start { start: -3, end: 7, }, &thread_pool).unwrap();
+    assert_eq!(rx.recv(), Ok(vec![-3, -2, -1, 0, 1, 2, 3, 4, 5, 6]));
 }
 
 #[allow(clippy::module_inception)]
@@ -301,6 +307,7 @@ mod stream {
                                                     },
                                                 }
                                             } else {
+                                                sklavenwelt.process = None;
                                                 komm::Streamzeug::NichtMehr
                                             };
                                             stream.commit_echo(stream_zeug).unwrap();
