@@ -273,7 +273,7 @@ mod stream {
                                             assert!(start < end);
                                             sklavenwelt.process = Some((start + 1, end));
                                             stream
-                                                .commit_echo(
+                                                .commit_stream(
                                                     komm::Streamzeug::Zeug {
                                                         zeug: start,
                                                         mehr_stream: StreamNext {
@@ -308,7 +308,7 @@ mod stream {
                                                 sklavenwelt.process = None;
                                                 komm::Streamzeug::NichtMehr
                                             };
-                                            stream.commit_echo(stream_zeug).unwrap();
+                                            stream.commit_stream(stream_zeug).unwrap();
                                         },
                                         SklavenBefehl::Mehr {
                                             befehl: Order::Cancel(komm::UmschlagAbbrechen { stamp: Stamp, }),

@@ -125,13 +125,31 @@ pub enum Streamzeug<Z, ME> {
     },
 }
 
-pub trait Stream<Z, ME>: Echo<Streamzeug<Z, ME>> + Sized where ME: Echo<Self> { }
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct StreamError;
+
+pub trait Stream<Z, ME>
+where Self: Sized,
+      ME: Echo<Self>,
+{
+    fn commit_stream<M>(self, inhalt: Streamzeug<Z, M>) -> Result<(), StreamError> where ME: From<M>;
+}
 
 impl<B, Z, S, ME> Stream<Z, ME> for Rueckkopplung<B, S>
 where B: From<UmschlagAbbrechen<S>>,
       B: From<Umschlag<Streamzeug<Z, ME>, S>>,
       ME: Echo<Self>,
 {
+    fn commit_stream<M>(self, inhalt: Streamzeug<Z, M>) -> Result<(), StreamError> where ME: From<M> {
+        let inhalt_map = match inhalt {
+            Streamzeug::NichtMehr =>
+                Streamzeug::NichtMehr,
+            Streamzeug::Zeug { zeug, mehr_stream, } =>
+                Streamzeug::Zeug { zeug, mehr_stream: mehr_stream.into(), },
+        };
+        self.commit(inhalt_map)
+            .map_err(|_error| StreamError)
+    }
 }
 
 pub trait RueckkopplungWeg
