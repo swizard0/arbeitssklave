@@ -106,13 +106,25 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct EchoError;
 
+pub struct EchoInhalt<T>(pub T);
+
+pub trait TunInhalt<T> {
+    fn tun(self) -> T;
+}
+
+impl<T> TunInhalt<T> for EchoInhalt<T> {
+    fn tun(self) -> T {
+        self.0
+    }
+}
+
 pub trait Echo<I> {
-    fn commit_echo<T>(self, inhalt: T) -> Result<(), EchoError> where I: From<T>;
+    fn commit_echo<T>(self, inhalt: T) -> Result<(), EchoError> where EchoInhalt<T>: TunInhalt<I>;
 }
 
 impl<B, I, S> Echo<I> for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>>, B: From<Umschlag<I, S>> {
-    fn commit_echo<T>(self, inhalt: T) -> Result<(), EchoError> where I: From<T> {
-        self.commit(inhalt.into())
+    fn commit_echo<T>(self, inhalt: T) -> Result<(), EchoError> where EchoInhalt<T>: TunInhalt<I> {
+        self.commit(EchoInhalt(inhalt).tun())
             .map_err(|_error| EchoError)
     }
 }
