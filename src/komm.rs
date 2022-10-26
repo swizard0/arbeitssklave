@@ -112,9 +112,9 @@ pub trait TunInhalt<T> {
     fn tun(self) -> T;
 }
 
-impl<T> TunInhalt<T> for EchoInhalt<T> {
-    fn tun(self) -> T {
-        self.0
+impl<T, U> TunInhalt<U> for EchoInhalt<T> where U: From<T> {
+    fn tun(self) -> U {
+        self.0.into()
     }
 }
 
