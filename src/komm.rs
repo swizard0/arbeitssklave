@@ -106,22 +106,13 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct EchoError;
 
-pub struct EchoInhalt<T>(pub T);
-
-impl<T> From<T> for EchoInhalt<T> {
-    fn from(value: T) -> EchoInhalt<T> {
-        EchoInhalt(value)
-    }
-}
-
 pub trait Echo<I> {
-    fn commit_echo<T>(self, inhalt: T) -> Result<(), EchoError> where EchoInhalt<I>: From<T>;
+    fn commit_echo(self, inhalt: I) -> Result<(), EchoError>;
 }
 
 impl<B, I, S> Echo<I> for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>>, B: From<Umschlag<I, S>> {
-    fn commit_echo<T>(self, inhalt: T) -> Result<(), EchoError> where EchoInhalt<I>: From<T> {
-        let EchoInhalt(value) = inhalt.into();
-        self.commit(value)
+    fn commit_echo(self, inhalt: I) -> Result<(), EchoError> {
+        self.commit(inhalt)
             .map_err(|_error| EchoError)
     }
 }

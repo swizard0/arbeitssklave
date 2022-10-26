@@ -232,7 +232,7 @@ mod stream {
     }
 
     impl<S> komm::Echo<S> for StreamNext<S> {
-        fn commit_echo<T>(self, inhalt: T) -> Result<(), komm::EchoError> where komm::EchoInhalt<S>: From<T> {
+        fn commit_echo(self, inhalt: S) -> Result<(), komm::EchoError> {
             self.rueckkopplung.commit_echo(inhalt)
         }
     }
