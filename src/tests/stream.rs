@@ -2,6 +2,7 @@ use std::{
     mem,
     sync::{
         mpsc,
+        Mutex,
     },
 };
 
@@ -36,7 +37,7 @@ fn basic() {
     struct LocalStamp;
 
     struct Welt {
-        tx: mpsc::Sender<Vec<isize>>,
+        tx: Mutex<mpsc::Sender<Vec<isize>>>,
         current: Vec<isize>,
         sendegeraet: komm::Sendegeraet<LocalOrder>,
         stream_sendegeraet: komm::Sendegeraet<stream::Order<Stream>>,
@@ -106,7 +107,8 @@ fn basic() {
                                             let current = mem::take(&mut sklavenwelt.current);
                                             assert!(sklavenwelt.maybe_stream.is_some());
                                             sklavenwelt.maybe_stream = None;
-                                            sklavenwelt.tx.send(current).ok();
+                                            let tx_lock = sklavenwelt.tx.lock().unwrap();
+                                            tx_lock.send(current).ok();
                                         },
                                         SklavenBefehl::Mehr {
                                             befehl: LocalOrder::GotAnItem(komm::Umschlag {
@@ -143,7 +145,8 @@ fn basic() {
                                             let current = mem::take(&mut sklavenwelt.current);
                                             assert!(sklavenwelt.maybe_stream.is_some());
                                             sklavenwelt.maybe_stream = None;
-                                            sklavenwelt.tx.send(current).ok();
+                                            let tx_lock = sklavenwelt.tx.lock().unwrap();
+                                            tx_lock.send(current).ok();
                                         },
                                         SklavenBefehl::Ende {
                                             sklave_job: next_sklave_job,
@@ -172,7 +175,7 @@ fn basic() {
     let meister = freie
         .versklaven(
             Welt {
-                tx,
+                tx: Mutex::new(tx),
                 current: Vec::new(),
                 sendegeraet,
                 stream_sendegeraet,
@@ -345,8 +348,8 @@ mod stream {
     }
 
     pub fn start<P, S>(thread_pool: &P) -> (Meister<Welt, Order<S>>, komm::Sendegeraet<Order<S>>)
-    where P: edeltraud::ThreadPool<Job<S>> + Clone + Send + 'static,
-          S: komm::Echo<komm::Streamzeug<isize>> + Send + 'static,
+    where P: edeltraud::ThreadPool<Job<S>> + Clone + Send + Sync + 'static,
+          S: komm::Echo<komm::Streamzeug<isize>> + Send + Sync + 'static,
     {
         let freie = Freie::new();
         let sendegeraet = komm::Sendegeraet::starten(&freie, thread_pool.clone()).unwrap();

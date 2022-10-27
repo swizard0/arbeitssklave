@@ -1,8 +1,5 @@
 use std::{
     fmt,
-    ops::{
-        Deref,
-    },
     sync::{
         Arc,
         atomic::{
@@ -24,28 +21,6 @@ use crate::{
     Error as ArbeitssklaveError,
 };
 
-pub struct Sendegeraet<B> {
-    ewig_meister: ewig::Meister<B, Error>,
-    stream_counter: Arc<AtomicUsize>,
-}
-
-impl<B> Clone for Sendegeraet<B> {
-    fn clone(&self) -> Self {
-        Self {
-            ewig_meister: self.ewig_meister.clone(),
-            stream_counter: self.stream_counter.clone(),
-        }
-    }
-}
-
-impl<B> Deref for Sendegeraet<B> {
-    type Target = ewig::Meister<B, Error>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.ewig_meister
-    }
-}
-
 #[derive(Debug)]
 pub enum Error {
     Ewig(ewig::Error),
@@ -61,21 +36,60 @@ impl From<ewig::Error> for Error {
 
 // Sendegeraet
 
-impl<B> Sendegeraet<B> {
+pub struct Sendegeraet<B> {
+    // ewig_meister: ewig::Meister<B, Error>,
+    meister: Arc<dyn SendegeraetMeister<B>>,
+    stream_counter: Arc<AtomicUsize>,
+}
+
+trait SendegeraetMeister<B> where Self: Send + Sync + 'static {
+    fn befehl(&self, order: B) -> Result<(), Error>;
+}
+
+struct SendegeraetInner<W, B, P, J> {
+    meister: Meister<W, B>,
+    thread_pool: P,
+    _marker: PhantomData<J>,
+}
+
+impl<W, B, P, J> SendegeraetMeister<B> for SendegeraetInner<W, B, P, J>
+where P: edeltraud::ThreadPool<J> + Send + Sync + 'static,
+      J: edeltraud::Job + From<SklaveJob<W, B>> + Sync,
+      W: Send + 'static,
+      B: Send + 'static,
+{
+    fn befehl(&self, order: B) -> Result<(), Error> {
+        self.meister.befehl(order, &self.thread_pool)
+            .map_err(Error::Meister)
+    }
+}
+
+impl<B> Sendegeraet<B> where B: Send + 'static {
     pub fn starten<W, P, J>(freie: &Freie<W, B>, thread_pool: P) -> Result<Self, Error>
-    where P: edeltraud::ThreadPool<J> + Send + 'static,
-          J: edeltraud::Job + From<SklaveJob<W, B>>,
+    where P: edeltraud::ThreadPool<J> + Send + Sync + 'static,
+          J: edeltraud::Job + From<SklaveJob<W, B>> + Sync,
           W: Send + 'static,
-          B: Send + 'static,
     {
         let meister = Meister { inner: freie.inner.clone(), };
-        let ewig_meister = ewig::Freie::new()
-            .versklaven_als(
-                "arbeitssklave::komm::Sendegeraet".to_string(),
-                move |sklave| sendegeraet_loop(sklave, &meister, &thread_pool),
-            )?;
         let stream_counter = Arc::new(AtomicUsize::new(0));
-        Ok(Sendegeraet { ewig_meister, stream_counter, })
+        let inner = SendegeraetInner {
+            meister,
+            thread_pool,
+            _marker: PhantomData,
+        };
+        // let ewig_meister = ewig::Freie::new()
+        //     .versklaven_als(
+        //         "arbeitssklave::komm::Sendegeraet".to_string(),
+        //         move |sklave| sendegeraet_loop(sklave, &meister, &thread_pool),
+        //     )?;
+        Ok(Sendegeraet {
+            meister: Arc::new(inner),
+            stream_counter,
+        })
+    }
+
+    pub fn befehl(&self, order: B) -> Result<(), Error> {
+        self.meister.befehl(order)
     }
 
     pub fn rueckkopplung<S>(&self, stamp: S) -> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
@@ -107,6 +121,23 @@ impl<B> Sendegeraet<B> {
     }
 }
 
+impl<B> Clone for Sendegeraet<B> {
+    fn clone(&self) -> Self {
+        Self {
+            meister: self.meister.clone(),
+            stream_counter: self.stream_counter.clone(),
+        }
+    }
+}
+
+// impl<B> Deref for Sendegeraet<B> {
+//     type Target = ewig::Meister<B, Error>;
+
+//     fn deref(&self) -> &Self::Target {
+//         &self.ewig_meister
+//     }
+// }
+
 // Rueckkopplung
 
 #[derive(Debug)]
@@ -120,12 +151,12 @@ pub struct UmschlagAbbrechen<S> {
     pub stamp: S,
 }
 
-pub struct Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+pub struct Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> + Send + 'static {
     sendegeraet: Sendegeraet<B>,
     maybe_stamp: Option<S>,
 }
 
-impl<B, S> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+impl<B, S> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> + Send + 'static {
     pub fn commit<I>(mut self, inhalt: I) -> Result<(), Error> where B: From<Umschlag<I, S>> {
         let stamp = self.maybe_stamp.take().unwrap();
         let umschlag = Umschlag { inhalt, stamp, };
@@ -134,7 +165,7 @@ impl<B, S> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
     }
 }
 
-impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> + Send + 'static {
     fn drop(&mut self) {
         if let Some(stamp) = self.maybe_stamp.take() {
             let umschlag_abbrechen = UmschlagAbbrechen { stamp, };
@@ -153,7 +184,11 @@ pub trait Echo<I> {
     fn commit_echo(self, inhalt: I) -> Result<(), EchoError>;
 }
 
-impl<B, I, S> Echo<I> for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>>, B: From<Umschlag<I, S>> {
+impl<B, I, S> Echo<I> for Rueckkopplung<B, S>
+where B: From<UmschlagAbbrechen<S>>,
+      B: From<Umschlag<I, S>>,
+      B: Send + 'static,
+{
     fn commit_echo(self, inhalt: I) -> Result<(), EchoError> {
         self.commit(inhalt)
             .map_err(|_error| EchoError)
@@ -236,13 +271,13 @@ pub struct StreamAbbrechen {
     pub stream_id: StreamId,
 }
 
-pub struct Stream<B> where B: From<StreamAbbrechen> {
+pub struct Stream<B> where B: From<StreamAbbrechen> + Send + 'static {
     sendegeraet: Sendegeraet<B>,
     stream_id: StreamId,
     cancellable: Arc<AtomicBool>,
 }
 
-impl<B> Stream<B> where B: From<StreamAbbrechen> {
+impl<B> Stream<B> where B: From<StreamAbbrechen> + Send + 'static {
     pub fn stream_id(&self) -> &StreamId {
         &self.stream_id
     }
@@ -252,7 +287,7 @@ impl<B> Stream<B> where B: From<StreamAbbrechen> {
     }
 }
 
-impl<B> Drop for Stream<B> where B: From<StreamAbbrechen> {
+impl<B> Drop for Stream<B> where B: From<StreamAbbrechen> + Send + 'static {
     fn drop(&mut self) {
         if self.cancellable.load(Ordering::SeqCst) {
             self.sendegeraet.befehl(StreamAbbrechen { stream_id: self.stream_id.clone(), }.into()).ok();
@@ -260,27 +295,9 @@ impl<B> Drop for Stream<B> where B: From<StreamAbbrechen> {
     }
 }
 
-// sendegeraet_loop
+// misc
 
-fn sendegeraet_loop<W, B, P, J>(
-    sklave: &ewig::Sklave<B, Error>,
-    meister: &Meister<W, B>,
-    thread_pool: &P,
-)
-    -> Result<(), Error>
-where P: edeltraud::ThreadPool<J> + Send + 'static,
-      J: edeltraud::Job + From<SklaveJob<W, B>>,
-      W: Send + 'static,
-      B: Send + 'static,
-{
-    loop {
-        let orders = sklave.zu_ihren_diensten()?;
-        meister.befehle(orders, thread_pool)
-            .map_err(Error::Meister)?;
-    }
-}
-
-impl<B, S> fmt::Debug for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>>, S: fmt::Debug {
+impl<B, S> fmt::Debug for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> + Send + 'static, S: fmt::Debug {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Rueckkopplung")
             .field("sendegeraet", &"<Sendegeraet>")

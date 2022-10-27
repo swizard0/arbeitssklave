@@ -1,6 +1,7 @@
 use std::{
     sync::{
         mpsc,
+        Mutex,
     },
 };
 
@@ -30,10 +31,10 @@ fn basic() {
         }
     }
 
-    struct LocalJob(SklaveJob<mpsc::Sender<Canceled>, LocalOrder>);
+    struct LocalJob(SklaveJob<Mutex<mpsc::Sender<Canceled>>, LocalOrder>);
 
-    impl From<SklaveJob<mpsc::Sender<Canceled>, LocalOrder>> for LocalJob {
-        fn from(sklave_job: SklaveJob<mpsc::Sender<Canceled>, LocalOrder>) -> LocalJob {
+    impl From<SklaveJob<Mutex<mpsc::Sender<Canceled>>, LocalOrder>> for LocalJob {
+        fn from(sklave_job: SklaveJob<Mutex<mpsc::Sender<Canceled>>, LocalOrder>) -> LocalJob {
             LocalJob(sklave_job)
         }
     }
@@ -51,12 +52,14 @@ fn basic() {
                                 SklavenBefehl::Mehr {
                                     befehl: LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, }),
                                     mehr_befehle,
-                               } => {
-                                    mehr_befehle
-                                        .sklavenwelt()
-                                        .send(Canceled)
-                                        .ok();
+                                } => {
                                     befehle = mehr_befehle;
+                                    let tx_lock = befehle
+                                        .sklavenwelt()
+                                        .lock()
+                                        .unwrap();
+                                    tx_lock.send(Canceled)
+                                        .ok();
                                 },
                                 SklavenBefehl::Ende {
                                     sklave_job: next_sklave_job,
@@ -79,7 +82,8 @@ fn basic() {
     let sendegeraet = Sendegeraet::starten(&driver_freie, thread_pool.clone()).unwrap();
 
     let (tx, rx) = mpsc::channel();
-    let _driver_meister = driver_freie.versklaven(tx, &thread_pool).unwrap();
+    let _driver_meister =
+        driver_freie.versklaven(Mutex::new(tx), &thread_pool).unwrap();
 
     let rueckkopplung = sendegeraet.rueckkopplung(LocalStamp);
     drop(rueckkopplung);

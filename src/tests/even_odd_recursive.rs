@@ -1,6 +1,7 @@
 use std::{
     sync::{
         mpsc,
+        Mutex,
     },
 };
 
@@ -43,7 +44,7 @@ fn basic() {
     let mut outcomes = Vec::new();
     for value in [13, 8, 1024, 1, 0] {
         let (reply_tx, reply_rx) = mpsc::channel();
-        driver_meister.befehl(Order::Calc { value, reply_tx, }, &thread_pool).unwrap();
+        driver_meister.befehl(Order::Calc { value, reply_tx: Mutex::new(reply_tx), }, &thread_pool).unwrap();
         let result = reply_rx.recv().unwrap();
         outcomes.push(result);
     }
@@ -71,7 +72,7 @@ impl ValueType {
 enum Order {
     Calc {
         value: usize,
-        reply_tx: mpsc::Sender<ValueType>,
+        reply_tx: Mutex<mpsc::Sender<ValueType>>,
     },
     OddUmschlag(Umschlag<odd::Outcome, Stamp>),
     EvenUmschlag(Umschlag<even::Outcome, Stamp>),
@@ -134,7 +135,7 @@ impl From<EvenJob> for Job {
 struct Stamp {
     current_value: usize,
     current_guess: ValueType,
-    reply_tx: mpsc::Sender<ValueType>,
+    reply_tx: Mutex<mpsc::Sender<ValueType>>,
 }
 
 impl edeltraud::Job for Job {
@@ -185,7 +186,8 @@ impl edeltraud::Job for Job {
                                         }),
                                         mehr_befehle,
                                     } => {
-                                        reply_tx.send(current_guess).unwrap();
+                                        let tx_lock = reply_tx.lock().unwrap();
+                                        tx_lock.send(current_guess).unwrap();
                                         befehle = mehr_befehle;
                                     },
                                     SklavenBefehl::Mehr {
@@ -222,7 +224,8 @@ impl edeltraud::Job for Job {
                                         }),
                                         mehr_befehle,
                                     } => {
-                                        reply_tx.send(current_guess).unwrap();
+                                        let tx_lock = reply_tx.lock().unwrap();
+                                        tx_lock.send(current_guess).unwrap();
                                         befehle = mehr_befehle;
                                     },
                                     SklavenBefehl::Mehr {
