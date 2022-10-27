@@ -189,7 +189,14 @@ pub struct StreamId {
 }
 
 pub struct StreamzeugNichtMehr {
-    _marker: PhantomData<()>,
+    stream_id: StreamId,
+}
+
+
+impl StreamzeugNichtMehr {
+    pub fn stream_id(&self) -> &StreamId {
+        &self.stream_id
+    }
 }
 
 pub struct StreamzeugMehr {
@@ -232,7 +239,7 @@ impl StreamToken {
 
     pub fn streamzeug_nicht_mehr<Z>(self) -> Streamzeug<Z> {
         self.cancellable.store(false, Ordering::SeqCst);
-        Streamzeug::NichtMehr(StreamzeugNichtMehr { _marker: PhantomData, })
+        Streamzeug::NichtMehr(StreamzeugNichtMehr { stream_id: self.stream_id, })
     }
 
     pub fn streamzeug_zeug<Z>(self, zeug: Z) -> Streamzeug<Z> {

@@ -1,6 +1,6 @@
 [package]
 name = "arbeitssklave"
-version = "0.16.1"
+version = "0.16.2"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Primitive actor framework with static dispatching only on top of `edeltraud` thread pool."
 edition = "2021"
