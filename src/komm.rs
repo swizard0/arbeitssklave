@@ -37,7 +37,6 @@ impl From<ewig::Error> for Error {
 // Sendegeraet
 
 pub struct Sendegeraet<B> {
-    // ewig_meister: ewig::Meister<B, Error>,
     meister: Arc<dyn SendegeraetMeister<B>>,
     stream_counter: Arc<AtomicUsize>,
 }
@@ -77,11 +76,6 @@ impl<B> Sendegeraet<B> where B: Send + 'static {
             thread_pool,
             _marker: PhantomData,
         };
-        // let ewig_meister = ewig::Freie::new()
-        //     .versklaven_als(
-        //         "arbeitssklave::komm::Sendegeraet".to_string(),
-        //         move |sklave| sendegeraet_loop(sklave, &meister, &thread_pool),
-        //     )?;
         Ok(Sendegeraet {
             meister: Arc::new(inner),
             stream_counter,
@@ -129,14 +123,6 @@ impl<B> Clone for Sendegeraet<B> {
         }
     }
 }
-
-// impl<B> Deref for Sendegeraet<B> {
-//     type Target = ewig::Meister<B, Error>;
-
-//     fn deref(&self) -> &Self::Target {
-//         &self.ewig_meister
-//     }
-// }
 
 // Rueckkopplung
 
