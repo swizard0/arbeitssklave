@@ -158,6 +158,7 @@ impl<W, B> Meister<W, B> {
     }
 }
 
+
 impl<W, B> SklaveJob<W, B> {
     pub fn zu_ihren_diensten(mut self) -> Result<Gehorsam<W, B>, Error> {
         let mut sklave_job_inner = self.maybe_sklave_job_inner

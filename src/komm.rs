@@ -3,6 +3,17 @@ use std::{
     ops::{
         Deref,
     },
+    sync::{
+        Arc,
+        atomic::{
+            Ordering,
+            AtomicBool,
+            AtomicUsize,
+        },
+    },
+    marker::{
+        PhantomData,
+    },
 };
 
 use crate::{
@@ -15,11 +26,15 @@ use crate::{
 
 pub struct Sendegeraet<B> {
     ewig_meister: ewig::Meister<B, Error>,
+    stream_counter: Arc<AtomicUsize>,
 }
 
 impl<B> Clone for Sendegeraet<B> {
     fn clone(&self) -> Self {
-        Self { ewig_meister: self.ewig_meister.clone(), }
+        Self {
+            ewig_meister: self.ewig_meister.clone(),
+            stream_counter: self.stream_counter.clone(),
+        }
     }
 }
 
@@ -44,16 +59,7 @@ impl From<ewig::Error> for Error {
     }
 }
 
-#[derive(Debug)]
-pub struct Umschlag<I, S> {
-    pub inhalt: I,
-    pub stamp: S,
-}
-
-#[derive(Debug)]
-pub struct UmschlagAbbrechen<S> {
-    pub stamp: S,
-}
+// Sendegeraet
 
 impl<B> Sendegeraet<B> {
     pub fn starten<W, P, J>(freie: &Freie<W, B>, thread_pool: P) -> Result<Self, Error>
@@ -68,7 +74,8 @@ impl<B> Sendegeraet<B> {
                 "arbeitssklave::komm::Sendegeraet".to_string(),
                 move |sklave| sendegeraet_loop(sklave, &meister, &thread_pool),
             )?;
-        Ok(Sendegeraet { ewig_meister, })
+        let stream_counter = Arc::new(AtomicUsize::new(0));
+        Ok(Sendegeraet { ewig_meister, stream_counter, })
     }
 
     pub fn rueckkopplung<S>(&self, stamp: S) -> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
@@ -77,6 +84,40 @@ impl<B> Sendegeraet<B> {
             maybe_stamp: Some(stamp),
         }
     }
+
+    pub fn stream_starten<I>(&self, inhalt: I) -> Result<Stream<B>, Error>
+    where B: From<StreamStarten<I>>,
+          B: From<StreamAbbrechen>,
+    {
+        let id = self.stream_counter.fetch_add(1, Ordering::Relaxed);
+        let stream_id = StreamId { id, };
+        let cancellable = Arc::new(AtomicBool::new(true));
+        let stream_token = StreamToken::new(
+            stream_id.clone(),
+            cancellable.clone(),
+        );
+        let order = StreamStarten { inhalt, stream_token, }.into();
+        self.befehl(order)?;
+
+        Ok(Stream {
+            sendegeraet: self.clone(),
+            stream_id,
+            cancellable,
+        })
+    }
+}
+
+// Rueckkopplung
+
+#[derive(Debug)]
+pub struct Umschlag<I, S> {
+    pub inhalt: I,
+    pub stamp: S,
+}
+
+#[derive(Debug)]
+pub struct UmschlagAbbrechen<S> {
+    pub stamp: S,
 }
 
 pub struct Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
@@ -103,6 +144,8 @@ impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
     }
 }
 
+// Echo
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct EchoError;
 
@@ -117,49 +160,107 @@ impl<B, I, S> Echo<I> for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>
     }
 }
 
-pub enum Streamzeug<Z, ME> {
-    NichtMehr,
-    Zeug {
-        zeug: Z,
-        mehr_stream: ME,
-    },
+// Stream
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct StreamId {
+    id: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct StreamError;
-
-pub trait Stream<Z, ME>
-where Self: Sized,
-      ME: Echo<Self>,
-{
-    fn commit_stream<M>(self, inhalt: Streamzeug<Z, M>) -> Result<(), StreamError> where ME: From<M>;
+pub struct StreamzeugNichtMehr {
+    _marker: PhantomData<()>,
 }
 
-impl<B, Z, S, ME> Stream<Z, ME> for Rueckkopplung<B, S>
-where B: From<UmschlagAbbrechen<S>>,
-      B: From<Umschlag<Streamzeug<Z, ME>, S>>,
-      ME: Echo<Self>,
-{
-    fn commit_stream<M>(self, inhalt: Streamzeug<Z, M>) -> Result<(), StreamError> where ME: From<M> {
-        let inhalt_map = match inhalt {
-            Streamzeug::NichtMehr =>
-                Streamzeug::NichtMehr,
-            Streamzeug::Zeug { zeug, mehr_stream, } =>
-                Streamzeug::Zeug { zeug, mehr_stream: mehr_stream.into(), },
-        };
-        self.commit(inhalt_map)
-            .map_err(|_error| StreamError)
+pub struct StreamzeugMehr {
+    token: StreamToken,
+}
+
+impl StreamzeugMehr {
+    pub fn stream_id(&self) -> &StreamId {
+        self.token.stream_id()
     }
 }
 
-pub trait RueckkopplungWeg
-where Self::Befehl: From<UmschlagAbbrechen<Self::Stamp>>,
-      Self::Befehl: From<Umschlag<Self::Inhalt, Self::Stamp>>,
-{
-    type Stamp;
-    type Inhalt;
-    type Befehl;
+impl From<StreamzeugMehr> for StreamToken {
+    fn from(mehr: StreamzeugMehr) -> StreamToken {
+        mehr.token
+    }
 }
+
+pub enum Streamzeug<Z> {
+    NichtMehr(StreamzeugNichtMehr),
+    Zeug {
+        zeug: Z,
+        mehr: StreamzeugMehr,
+    },
+}
+
+pub struct StreamToken {
+    stream_id: StreamId,
+    cancellable: Arc<AtomicBool>,
+}
+
+impl StreamToken {
+    pub(crate) fn new(stream_id: StreamId, cancellable: Arc<AtomicBool>) -> StreamToken {
+        StreamToken { stream_id, cancellable, }
+    }
+
+    pub fn stream_id(&self) -> &StreamId {
+        &self.stream_id
+    }
+
+    pub fn streamzeug_nicht_mehr<Z>(self) -> Streamzeug<Z> {
+        self.cancellable.store(false, Ordering::SeqCst);
+        Streamzeug::NichtMehr(StreamzeugNichtMehr { _marker: PhantomData, })
+    }
+
+    pub fn streamzeug_zeug<Z>(self, zeug: Z) -> Streamzeug<Z> {
+        Streamzeug::Zeug { zeug, mehr: StreamzeugMehr { token: self, }, }
+    }
+}
+
+#[derive(Debug)]
+pub struct StreamStarten<I> {
+    pub inhalt: I,
+    pub stream_token: StreamToken,
+}
+
+#[derive(Debug)]
+pub struct StreamMehr<I> {
+    pub inhalt: I,
+    pub stream_token: StreamToken,
+}
+
+#[derive(Debug)]
+pub struct StreamAbbrechen {
+    pub stream_id: StreamId,
+}
+
+pub struct Stream<B> where B: From<StreamAbbrechen> {
+    sendegeraet: Sendegeraet<B>,
+    stream_id: StreamId,
+    cancellable: Arc<AtomicBool>,
+}
+
+impl<B> Stream<B> where B: From<StreamAbbrechen> {
+    pub fn stream_id(&self) -> &StreamId {
+        &self.stream_id
+    }
+
+    pub fn mehr<I>(&self, inhalt: I, stream_token: StreamToken) -> Result<(), Error> where B: From<StreamMehr<I>> {
+        self.sendegeraet.befehl(StreamMehr { inhalt, stream_token, }.into())
+    }
+}
+
+impl<B> Drop for Stream<B> where B: From<StreamAbbrechen> {
+    fn drop(&mut self) {
+        if self.cancellable.load(Ordering::SeqCst) {
+            self.sendegeraet.befehl(StreamAbbrechen { stream_id: self.stream_id.clone(), }.into()).ok();
+        }
+    }
+}
+
+// sendegeraet_loop
 
 fn sendegeraet_loop<W, B, P, J>(
     sklave: &ewig::Sklave<B, Error>,
@@ -184,6 +285,14 @@ impl<B, S> fmt::Debug for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>
         fmt.debug_struct("Rueckkopplung")
             .field("sendegeraet", &"<Sendegeraet>")
             .field("maybe_stamp", &self.maybe_stamp)
+            .finish()
+    }
+}
+
+impl fmt::Debug for StreamToken {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("StreamToken")
+            .field("stream_id", &self.stream_id)
             .finish()
     }
 }
