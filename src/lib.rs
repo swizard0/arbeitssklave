@@ -14,6 +14,7 @@ use std::{
 
 pub mod ewig;
 pub mod komm;
+pub mod utils;
 
 #[cfg(test)]
 mod tests;

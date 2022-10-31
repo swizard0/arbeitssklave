@@ -14,7 +14,6 @@ use std::{
 };
 
 use crate::{
-    ewig,
     Freie,
     Meister,
     SklaveJob,
@@ -23,15 +22,8 @@ use crate::{
 
 #[derive(Debug)]
 pub enum Error {
-    Ewig(ewig::Error),
     Meister(ArbeitssklaveError),
     Edeltraud(edeltraud::SpawnError),
-}
-
-impl From<ewig::Error> for Error {
-    fn from(error: ewig::Error) -> Error {
-        Error::Ewig(error)
-    }
 }
 
 // Sendegeraet
