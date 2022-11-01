@@ -169,7 +169,10 @@ fn basic() {
 
     let (tx, rx) = mpsc::channel();
 
-    let (_stream_meister, stream_sendegeraet) = stream::start(&edeltraud::ThreadPoolMap::new(thread_pool.clone()));
+    let (
+        _stream_meister,
+        stream_sendegeraet,
+    ) = stream::start(&edeltraud::ThreadPoolMap::new(thread_pool.clone()));
     let freie = Freie::new();
     let sendegeraet = komm::Sendegeraet::starten(&freie, thread_pool.clone()).unwrap();
     let meister = freie
