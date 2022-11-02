@@ -180,6 +180,7 @@ pub struct StreamId {
     id: usize,
 }
 
+#[derive(Debug)]
 pub struct StreamzeugNichtMehr {
     stream_id: StreamId,
 }
@@ -191,6 +192,7 @@ impl StreamzeugNichtMehr {
     }
 }
 
+#[derive(Debug)]
 pub struct StreamzeugMehr {
     token: StreamToken,
 }
@@ -207,6 +209,7 @@ impl From<StreamzeugMehr> for StreamToken {
     }
 }
 
+#[derive(Debug)]
 pub enum Streamzeug<Z> {
     NichtMehr(StreamzeugNichtMehr),
     Zeug {
