@@ -5,22 +5,18 @@ use std::{
 };
 
 use crate::{
-    komm::{
-        Sendegeraet,
-        UmschlagAbbrechen,
-    },
+    komm,
     utils,
-    Freie,
 };
 
 #[test]
 fn basic() {
     struct LocalStamp;
 
-    struct LocalOrder(UmschlagAbbrechen<LocalStamp>);
+    struct LocalOrder(komm::UmschlagAbbrechen<LocalStamp>);
 
-    impl From<UmschlagAbbrechen<LocalStamp>> for LocalOrder {
-        fn from(umschlag_abbrechen: UmschlagAbbrechen<LocalStamp>) -> LocalOrder {
+    impl From<komm::UmschlagAbbrechen<LocalStamp>> for LocalOrder {
+        fn from(umschlag_abbrechen: komm::UmschlagAbbrechen<LocalStamp>) -> LocalOrder {
             LocalOrder(umschlag_abbrechen)
         }
     }
@@ -29,16 +25,15 @@ fn basic() {
         .build()
         .unwrap();
 
-    let freie = Freie::new();
-    let sendegeraet = Sendegeraet::starten(&freie, thread_pool.clone()).unwrap();
     let (sync_tx, sync_rx) = mpsc::sync_channel(0);
-    let _meister = utils::mpsc_forward_adapter::into(freie, sync_tx, &thread_pool).unwrap();
+    let adapter =
+        utils::mpsc_forward_adapter::Adapter::versklaven(sync_tx, &thread_pool).unwrap();
 
-    let rueckkopplung = sendegeraet.rueckkopplung(LocalStamp);
+    let rueckkopplung = adapter.sklave_sendegeraet.rueckkopplung(LocalStamp);
     drop(rueckkopplung);
 
     assert!(matches!(
         sync_rx.recv_timeout(std::time::Duration::from_millis(100)),
-        Ok(LocalOrder(UmschlagAbbrechen { stamp: LocalStamp, })),
+        Ok(LocalOrder(komm::UmschlagAbbrechen { stamp: LocalStamp, })),
     ));
 }

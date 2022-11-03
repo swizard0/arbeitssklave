@@ -6,8 +6,7 @@ use std::{
 
 use crate::{
     ewig,
-    Freie,
-    Meister,
+    komm,
     Gehorsam,
     SklaveJob,
     SklavenBefehl,
@@ -17,6 +16,7 @@ use crate::{
 pub enum Error {
     Arbeitssklave(crate::Error),
     Ewig(ewig::Error),
+    SendegeraetStarten(komm::Error),
     Disconnected,
 }
 
@@ -26,22 +26,37 @@ impl From<ewig::Error> for Error {
     }
 }
 
-pub fn into<B, P>(
-    freie: Freie<Welt<B>, B>,
-    sync_sender: mpsc::SyncSender<B>,
-    thread_pool: &P,
-)
-    -> Result<Meister<Welt<B>, B>, Error>
-where P: edeltraud::ThreadPool<Job<B>>,
-      B: Send + 'static,
-{
-    let ewig_freie = ewig::Freie::new();
-    let ewig_meister =
-        ewig_freie.versklaven(move |sklave| forward(sklave, &sync_sender))?;
-    let meister = freie
-        .versklaven(Welt { ewig_meister, }, thread_pool)
-        .map_err(Error::Arbeitssklave)?;
-    Ok(meister)
+pub struct Adapter<B> {
+    pub sklave_meister: crate::Meister<Welt<B>, B>,
+    pub sklave_sendegeraet: komm::Sendegeraet<B>,
+}
+
+impl<B> Adapter<B> {
+    pub fn versklaven<P>(
+        sync_sender: mpsc::SyncSender<B>,
+        thread_pool: &P,
+    )
+        -> Result<Adapter<B>, Error>
+    where P: edeltraud::ThreadPool<Job<B>> + Clone + Sync + Send + 'static,
+          B: Send + Sync + 'static,
+    {
+        let ewig_freie = ewig::Freie::new();
+        let ewig_meister =
+            ewig_freie.versklaven(
+                move |sklave| forward(sklave, &sync_sender),
+            )?;
+        let sklave_freie = crate::Freie::new();
+        let sklave_sendegeraet =
+            komm::Sendegeraet::starten(
+                &sklave_freie,
+                thread_pool.clone(),
+            )
+            .map_err(Error::SendegeraetStarten)?;
+        let sklave_meister = sklave_freie
+            .versklaven(Welt { ewig_meister, }, thread_pool)
+            .map_err(Error::Arbeitssklave)?;
+        Ok(Adapter { sklave_meister, sklave_sendegeraet, })
+    }
 }
 
 pub struct Welt<B> {
