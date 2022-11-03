@@ -49,12 +49,13 @@ pub struct Welt<B> {
 }
 
 fn forward<B>(sklave: &ewig::Sklave<B, Error>, sender: &mpsc::SyncSender<B>) -> Result<(), Error> {
-    for befehl in sklave.zu_ihren_diensten()? {
-        if let Err(_send_error) = sender.send(befehl) {
-            return Err(Error::Disconnected);
+    loop {
+        for befehl in sklave.zu_ihren_diensten()? {
+            if let Err(_send_error) = sender.send(befehl) {
+                return Err(Error::Disconnected);
+            }
         }
     }
-    Ok(())
 }
 
 pub enum Job<B> {
