@@ -41,7 +41,7 @@ pub struct SklaveJob<W, B> {
 
 struct SklaveJobInner<W, B> {
     inner: Arc<Inner<W, B>>,
-    welt: Sklavenwelt<W, B>,
+    welt: Box<Sklavenwelt<W, B>>,
 }
 
 struct Sklavenwelt<W, B> {
@@ -65,7 +65,7 @@ struct InnerStateActive<W, B> {
 
 enum Activity<W, B> {
     Work,
-    Rest(Sklavenwelt<W, B>),
+    Rest(Box<Sklavenwelt<W, B>>),
 }
 
 pub enum Gehorsam<W, B> {
@@ -109,7 +109,13 @@ impl<W, B> Freie<W, B> {
           J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
         let meister = Meister { inner: self.inner, };
-        meister.whip(Sklavenwelt { sklavenwelt, taken_orders: Vec::new(), }, thread_pool)?;
+        meister.whip(
+            Box::new(Sklavenwelt {
+                sklavenwelt,
+                taken_orders: Vec::new(),
+            }),
+            thread_pool,
+        )?;
         Ok(meister)
     }
 }
@@ -144,7 +150,7 @@ impl<W, B> Meister<W, B> {
         }
     }
 
-    fn whip<P, J>(&self, welt: Sklavenwelt<W, B>, thread_pool: &P) -> Result<(), Error>
+    fn whip<P, J>(&self, welt: Box<Sklavenwelt<W, B>>, thread_pool: &P) -> Result<(), Error>
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
