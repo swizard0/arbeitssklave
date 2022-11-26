@@ -32,7 +32,6 @@ pub struct Sklave<B, E> {
 
 struct Inner<B, E> {
     orders: crossbeam::queue::SegQueue<B>,
-    is_waiting: atomic::AtomicBool,
     is_terminated: atomic::AtomicBool,
     maybe_error: Mutex<Option<E>>,
 }
@@ -54,7 +53,6 @@ impl<B, E> Freie<B, E> {
         Self {
             inner: Arc::new(Inner {
                 orders: crossbeam::queue::SegQueue::new(),
-                is_waiting: atomic::AtomicBool::new(false),
                 is_terminated: atomic::AtomicBool::new(false),
                 maybe_error: Mutex::new(None),
             }),
@@ -139,9 +137,7 @@ impl<B, E> Meister<B, E> where E: From<Error> {
             self.inner.orders.push(order);
         }
         if let Some(join_handle) = self.join_handle.as_ref() {
-            if self.inner.is_waiting.swap(false, atomic::Ordering::SeqCst) {
-                join_handle.thread().unpark();
-            }
+            join_handle.thread().unpark();
         }
 
         Ok(())
@@ -156,26 +152,17 @@ impl<B, E> Sklave<B, E> where E: From<Error> {
                 return Err(Error::Terminated.into());
             }
 
-            self.inner.is_waiting.store(true, atomic::Ordering::SeqCst);
             match self.inner.orders.pop() {
                 None => {
                     // nothing to do, sleeping
                     if backoff.is_completed() {
-                        loop {
-                            thread::park();
-                            if !self.inner.is_waiting.load(atomic::Ordering::SeqCst) ||
-                                self.inner.is_terminated.load(atomic::Ordering::SeqCst)
-                            {
-                                break;
-                            }
-                        }
+                        thread::park();
                     } else {
                         backoff.snooze();
                     }
                     continue;
                 },
                 Some(order) => {
-                    self.inner.is_waiting.store(false, atomic::Ordering::SeqCst);
                     return Ok(std::iter::once(order));
                 },
             }
