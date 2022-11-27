@@ -7,6 +7,7 @@ use std::{
         DerefMut,
     },
     sync::{
+        atomic,
         Arc,
         Mutex,
     },
@@ -50,17 +51,9 @@ struct Sklavenwelt<W, B> {
 }
 
 struct Inner<W, B> {
-    state: Mutex<InnerState<W, B>>,
-}
-
-enum InnerState<W, B> {
-    Active(InnerStateActive<W, B>),
-    Terminated,
-}
-
-struct InnerStateActive<W, B> {
-    orders: Vec<B>,
-    activity: Activity<W, B>,
+    orders: crossbeam::queue::SegQueue<B>,
+    touch_tag: TouchTag,
+    activity: Mutex<Activity<W, B>>,
 }
 
 enum Activity<W, B> {
@@ -82,6 +75,62 @@ pub enum Error {
     MutexIsPoisoned,
 }
 
+struct TouchTag {
+    tag: atomic::AtomicU64,
+}
+
+impl Default for TouchTag {
+    fn default() -> TouchTag {
+        TouchTag {
+            tag: atomic::AtomicU64::new(0),
+        }
+    }
+}
+
+impl TouchTag {
+    const ORDERS_COUNT_MASK: u64 = u32::MAX as u64;
+    const RESTING_BIT: u64 = Self::ORDERS_COUNT_MASK.wrapping_add(1);
+    const TERMINATED_BIT: u64 = Self::RESTING_BIT.wrapping_shl(1);
+
+    fn load(&self) -> u64 {
+        self.tag.load(atomic::Ordering::SeqCst)
+    }
+
+    fn try_set(&self, prev_tag: u64, new_tag: u64) -> bool {
+        self.tag
+            .compare_exchange(
+                prev_tag,
+                new_tag,
+                atomic::Ordering::Acquire,
+                atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+    }
+
+    fn set_terminated(&self) {
+        self.tag.fetch_or(Self::TERMINATED_BIT, atomic::Ordering::SeqCst);
+    }
+
+    fn decompose(tag: u64) -> (bool, bool, usize) {
+        (
+            tag & Self::TERMINATED_BIT != 0,
+            tag & Self::RESTING_BIT != 0,
+            (tag & Self::ORDERS_COUNT_MASK) as usize,
+        )
+    }
+
+    fn compose(is_terminated: bool, is_resting: bool, orders_count: usize) -> u64 {
+        let mut tag = orders_count as u64;
+        if is_resting {
+            tag |= Self::RESTING_BIT;
+        }
+        if is_terminated {
+            tag |= Self::TERMINATED_BIT;
+        }
+        tag
+    }
+}
+
 impl<W, B> Default for Freie<W, B> {
     fn default() -> Self {
         Self::new()
@@ -92,10 +141,9 @@ impl<W, B> Freie<W, B> {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Inner {
-                state: Mutex::new(InnerState::Active(InnerStateActive {
-                    orders: Vec::new(),
-                    activity: Activity::Work,
-                })),
+                orders: crossbeam::queue::SegQueue::new(),
+                touch_tag: TouchTag::default(),
+                activity: Mutex::new(Activity::Work),
             }),
         }
     }
@@ -110,10 +158,7 @@ impl<W, B> Freie<W, B> {
     {
         let meister = Meister { inner: self.inner, };
         meister.whip(
-            Box::new(Sklavenwelt {
-                sklavenwelt,
-                taken_orders: Vec::new(),
-            }),
+            Box::new(Sklavenwelt { sklavenwelt, taken_orders: Vec::new(), }),
             thread_pool,
         )?;
         Ok(meister)
@@ -125,7 +170,32 @@ impl<W, B> Meister<W, B> {
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
-        self.befehle(std::iter::once(order), thread_pool)
+        loop {
+            let prev_tag = self.inner.touch_tag.load();
+            let (is_terminated, is_resting, orders_count) = TouchTag::decompose(prev_tag);
+            if is_terminated {
+                return Err(Error::Terminated);
+            }
+            let new_tag = TouchTag::compose(is_terminated, false, orders_count + 1);
+            if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
+                continue;
+            }
+            if is_resting {
+                let prev_activity = {
+                    let mut activity_lock = self.inner.activity.lock()
+                        .map_err(|_| Error::MutexIsPoisoned)?;
+                    mem::replace(&mut *activity_lock, Activity::Work)
+                };
+                match prev_activity {
+                    Activity::Rest(welt) =>
+                        self.whip(welt, thread_pool)?,
+                    Activity::Work =>
+                        unreachable!("totally unexpected Activity::Work after taking `is_resting` flag"),
+                }
+            }
+            self.inner.orders.push(order);
+            return Ok(());
+        }
     }
 
     pub fn befehle<P, J, I>(&self, orders: I, thread_pool: &P) -> Result<(), Error>
@@ -133,21 +203,10 @@ impl<W, B> Meister<W, B> {
           J: edeltraud::Job + From<SklaveJob<W, B>>,
           I: IntoIterator<Item = B>,
     {
-        let prev_activity =
-            match *self.inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
-                InnerState::Active(ref mut state) => {
-                    state.orders.extend(orders);
-                    mem::replace(&mut state.activity, Activity::Work)
-                },
-                InnerState::Terminated =>
-                    return Err(Error::Terminated),
-            };
-        match prev_activity {
-            Activity::Work =>
-                Ok(()),
-            Activity::Rest(welt) =>
-                self.whip(welt, thread_pool),
+        for order in orders {
+            self.befehl(order, thread_pool)?;
         }
+        Ok(())
     }
 
     fn whip<P, J>(&self, welt: Box<Sklavenwelt<W, B>>, thread_pool: &P) -> Result<(), Error>
@@ -171,27 +230,43 @@ impl<W, B> SklaveJob<W, B> {
         let mut sklave_job_inner = self.maybe_sklave_job_inner
             .take()
             .ok_or(Error::Terminated)?;
-        loop {
-            if sklave_job_inner.welt.taken_orders.is_empty() {
-                match &mut *sklave_job_inner.inner.state.lock().map_err(|_| Error::MutexIsPoisoned)? {
-                    InnerState::Active(state) if state.orders.is_empty() => {
-                        assert!(matches!(state.activity, Activity::Work));
-                        state.activity = Activity::Rest(sklave_job_inner.welt);
-                        return Ok(Gehorsam::Rasten);
-                    },
-                    InnerState::Active(InnerStateActive { orders, .. }) => {
-                        mem::swap(orders, &mut sklave_job_inner.welt.taken_orders);
-                    },
-                    InnerState::Terminated =>
-                        return Err(Error::Terminated),
+        'outer: loop {
+            let prev_tag = sklave_job_inner.inner.touch_tag.load();
+            let (is_terminated, is_resting, orders_count) = TouchTag::decompose(prev_tag);
+            assert!(!is_resting);
+            if is_terminated {
+                return Err(Error::Terminated);
+            }
+            if orders_count == 0 {
+                if !sklave_job_inner.welt.taken_orders.is_empty() {
+                    self.maybe_sklave_job_inner = Some(sklave_job_inner);
+                    return Ok(Gehorsam::Machen {
+                        befehle: SklavenBefehle { sklave_job: self, },
+                    });
                 }
+
+                let new_tag = TouchTag::compose(is_terminated, true, 0);
+                let mut activity_lock = sklave_job_inner.inner.activity.lock()
+                    .map_err(|_| Error::MutexIsPoisoned)?;
+                if !sklave_job_inner.inner.touch_tag.try_set(prev_tag, new_tag) {
+                    continue 'outer;
+                }
+                *activity_lock = Activity::Rest(sklave_job_inner.welt);
+                return Ok(Gehorsam::Rasten);
             } else {
-                self.maybe_sklave_job_inner =
-                    Some(sklave_job_inner);
-                return Ok(Gehorsam::Machen {
-                    befehle: SklavenBefehle { sklave_job: self, },
-                });
-            };
+                let new_tag = TouchTag::compose(is_terminated, false, orders_count - 1);
+                if !sklave_job_inner.inner.touch_tag.try_set(prev_tag, new_tag) {
+                    continue 'outer;
+                }
+                let backoff = crossbeam::utils::Backoff::new();
+                loop {
+                    if let Some(order) = sklave_job_inner.inner.orders.pop() {
+                        sklave_job_inner.welt.taken_orders.push(order);
+                        continue 'outer;
+                    }
+                    backoff.snooze();
+                }
+            }
         }
     }
 
@@ -259,9 +334,7 @@ impl<W, B> DerefMut for SklavenBefehle<W, B> {
 impl<W, B> Drop for SklaveJob<W, B> {
     fn drop(&mut self) {
         if let Some(sklave_job_inner) = self.maybe_sklave_job_inner.take() {
-            if let Ok(mut state) = sklave_job_inner.inner.state.lock() {
-                *state = InnerState::Terminated;
-            }
+            sklave_job_inner.inner.touch_tag.set_terminated();
         }
     }
 }
