@@ -63,7 +63,7 @@ pub struct Welt<B> {
     ewig_meister: ewig::Meister<B, Error>,
 }
 
-fn forward<B>(sklave: &ewig::Sklave<B, Error>, sender: &mpsc::SyncSender<B>) -> Result<(), Error> {
+fn forward<B>(sklave: &mut ewig::Sklave<B, Error>, sender: &mpsc::SyncSender<B>) -> Result<(), Error> {
     loop {
         for befehl in sklave.zu_ihren_diensten()? {
             if let Err(_send_error) = sender.send(befehl) {

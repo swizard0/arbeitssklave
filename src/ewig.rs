@@ -28,6 +28,7 @@ impl<B, E> Clone for Meister<B, E> {
 
 pub struct Sklave<B, E> {
     inner: Arc<Inner<B, E>>,
+    taken_orders: Vec<B>,
 }
 
 struct Inner<B, E> {
@@ -60,7 +61,7 @@ impl<B, E> Freie<B, E> {
     }
 
     pub fn versklaven<F>(self, sklave_job: F) -> Result<Meister<B, E>, E>
-    where F: FnOnce(&Sklave<B, E>) -> Result<(), E> + Send + 'static,
+    where F: FnOnce(&mut Sklave<B, E>) -> Result<(), E> + Send + 'static,
           B: Send + 'static,
           E: From<Error> + Send + 'static,
     {
@@ -68,32 +69,39 @@ impl<B, E> Freie<B, E> {
     }
 
     pub fn versklaven_als<F>(self, thread_name: String, sklave_job: F) -> Result<Meister<B, E>, E>
-    where F: FnOnce(&Sklave<B, E>) -> Result<(), E> + Send + 'static,
+    where F: FnOnce(&mut Sklave<B, E>) -> Result<(), E> + Send + 'static,
           B: Send + 'static,
           E: From<Error> + Send + 'static,
     {
-        let sklave = Sklave {
+        let mut sklave = Sklave {
             inner: self.inner.clone(),
+            taken_orders: Vec::new(),
         };
         let join_handle = thread::Builder::new()
             .name(thread_name)
             .spawn(move || {
-                let _drop_bomb = DropBomp { is_terminated: &sklave.inner.is_terminated, };
-                if let Err(error) = sklave_job(&sklave) {
+                struct DropBomp<B, E> {
+                    inner_clone: Arc<Inner<B, E>>,
+                }
+
+                impl<B, E> Drop for DropBomp<B, E> {
+                    fn drop(&mut self) {
+                        self.inner_clone.is_terminated.store(true, atomic::Ordering::SeqCst);
+                    }
+                }
+
+                let _drop_bomb = DropBomp {
+                    inner_clone: sklave.inner.clone(),
+                };
+
+
+                if let Err(error) = sklave_job(&mut sklave) {
                     if let Ok(mut locked_maybe_error) = sklave.inner.maybe_error.lock() {
                         *locked_maybe_error = Some(error);
                     }
                 }
 
-                struct DropBomp<'a> {
-                    is_terminated: &'a atomic::AtomicBool,
-                }
 
-                impl<'a> Drop for DropBomp<'a> {
-                    fn drop(&mut self) {
-                        self.is_terminated.store(true, atomic::Ordering::SeqCst);
-                    }
-                }
             })
             .map_err(Error::ThreadSpawn)?;
         Ok(Meister {
@@ -145,7 +153,11 @@ impl<B, E> Meister<B, E> where E: From<Error> {
 }
 
 impl<B, E> Sklave<B, E> where E: From<Error> {
-    pub fn zu_ihren_diensten(&self) -> Result<impl Iterator<Item = B> + '_, E> {
+    pub fn zu_ihren_diensten(&mut self) -> Result<impl Iterator<Item = B> + '_, E> {
+        if !self.taken_orders.is_empty() {
+            return Ok(self.taken_orders.drain(..));
+        }
+
         let backoff = crossbeam::utils::Backoff::new();
         loop {
             if self.inner.is_terminated.load(atomic::Ordering::SeqCst) {
@@ -153,7 +165,7 @@ impl<B, E> Sklave<B, E> where E: From<Error> {
             }
 
             match self.inner.orders.pop() {
-                None => {
+                None if self.taken_orders.is_empty() => {
                     // nothing to do, sleeping
                     if backoff.is_completed() {
                         thread::park();
@@ -162,9 +174,10 @@ impl<B, E> Sklave<B, E> where E: From<Error> {
                     }
                     continue;
                 },
-                Some(order) => {
-                    return Ok(std::iter::once(order));
-                },
+                None =>
+                    return Ok(self.taken_orders.drain(..)),
+                Some(order) =>
+                    self.taken_orders.push(order),
             }
         }
     }
