@@ -8,15 +8,13 @@ use crate::{
     ewig,
     komm,
     Gehorsam,
-    SklaveJob,
     SklavenBefehl,
 };
 
 #[derive(Debug)]
 pub enum Error {
-    Arbeitssklave(crate::Error),
+    Versklaven(komm::Error),
     Ewig(ewig::Error),
-    SendegeraetStarten(komm::Error),
     Disconnected,
 }
 
@@ -27,8 +25,7 @@ impl From<ewig::Error> for Error {
 }
 
 pub struct Adapter<B> {
-    pub sklave_meister: crate::Meister<Welt<B>, B>,
-    pub sklave_sendegeraet: komm::Sendegeraet<B>,
+    pub sklave_meister: komm::Meister<Welt<B>, B>,
 }
 
 impl<B> Adapter<B> {
@@ -45,17 +42,13 @@ impl<B> Adapter<B> {
             ewig_freie.versklaven(
                 move |sklave| forward(sklave, &sync_sender),
             )?;
-        let sklave_freie = crate::Freie::new();
-        let sklave_sendegeraet =
-            komm::Sendegeraet::starten(
-                &sklave_freie,
-                thread_pool.clone(),
-            )
-            .map_err(Error::SendegeraetStarten)?;
+        let sklave_freie = crate::Freie::new(
+            Welt { ewig_meister, },
+        );
         let sklave_meister = sklave_freie
-            .versklaven(Welt { ewig_meister, }, thread_pool)
-            .map_err(Error::Arbeitssklave)?;
-        Ok(Adapter { sklave_meister, sklave_sendegeraet, })
+            .versklaven_komm(thread_pool)
+            .map_err(Error::Versklaven)?;
+        Ok(Adapter { sklave_meister, })
     }
 }
 
@@ -74,11 +67,11 @@ fn forward<B>(sklave: &mut ewig::Sklave<B, Error>, sender: &mpsc::SyncSender<B>)
 }
 
 pub enum Job<B> {
-    Sklave(SklaveJob<Welt<B>, B>),
+    Sklave(komm::SklaveJob<Welt<B>, B>),
 }
 
-impl<B> From<SklaveJob<Welt<B>, B>> for Job<B> {
-    fn from(job: SklaveJob<Welt<B>, B>) -> Job<B> {
+impl<B> From<komm::SklaveJob<Welt<B>, B>> for Job<B> {
+    fn from(job: komm::SklaveJob<Welt<B>, B>) -> Job<B> {
         Job::Sklave(job)
     }
 }
@@ -96,7 +89,7 @@ impl<B> edeltraud::Job for Job<B> where B: Send + 'static {
                                 match befehle.befehl() {
                                     SklavenBefehl::Mehr { befehl, mehr_befehle, } => {
                                         befehle = mehr_befehle;
-                                        let sklavenwelt = befehle.sklavenwelt();
+                                        let sklavenwelt = &*befehle;
                                         if let Err(send_error) = sklavenwelt.ewig_meister.befehl(befehl) {
                                             log::debug!("befehl forward failed: {send_error:?}");
                                             return;

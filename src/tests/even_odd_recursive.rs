@@ -6,16 +6,10 @@ use std::{
 };
 
 use crate::{
-    komm::{
-        Umschlag,
-        Sendegeraet,
-        Rueckkopplung,
-        UmschlagAbbrechen,
-    },
+    komm,
     Freie,
     Meister,
     Gehorsam,
-    SklaveJob,
     SklavenBefehl,
 };
 
@@ -28,28 +22,23 @@ fn basic() {
     let odd_meister = odd::start(&edeltraud::ThreadPoolMap::new(&thread_pool));
     let even_meister = even::start(&edeltraud::ThreadPoolMap::new(&thread_pool));
 
-    let driver_freie = Freie::new();
-    let sendegeraet = Sendegeraet::starten(&driver_freie, thread_pool.clone()).unwrap();
+    let driver_freie = Freie::new(Welt {
+        odd_meister,
+        even_meister,
+    });
     let driver_meister =
-        driver_freie.versklaven(
-            Welt {
-                odd_meister,
-                even_meister,
-                sendegeraet,
-            },
-            &thread_pool,
-        )
+        driver_freie.versklaven_komm(&thread_pool)
         .unwrap();
 
     let mut outcomes = Vec::new();
-    for value in [13, 8, 1024, 1, 0] {
+    for value in [13, 8, 1024, 1, 0, 65535] {
         let (reply_tx, reply_rx) = mpsc::channel();
         driver_meister.befehl(Order::Calc { value, reply_tx: Mutex::new(reply_tx), }, &thread_pool).unwrap();
         let result = reply_rx.recv().unwrap();
         outcomes.push(result);
     }
 
-    assert_eq!(outcomes, vec![ValueType::Odd, ValueType::Even, ValueType::Even, ValueType::Odd, ValueType::Even]);
+    assert_eq!(outcomes, vec![ValueType::Odd, ValueType::Even, ValueType::Even, ValueType::Odd, ValueType::Even, ValueType::Odd]);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -74,48 +63,47 @@ enum Order {
         value: usize,
         reply_tx: Mutex<mpsc::Sender<ValueType>>,
     },
-    OddUmschlag(Umschlag<odd::Outcome, Stamp>),
-    EvenUmschlag(Umschlag<even::Outcome, Stamp>),
-    Abbrechen(UmschlagAbbrechen<Stamp>),
+    OddUmschlag(komm::Umschlag<odd::Outcome, Stamp>),
+    EvenUmschlag(komm::Umschlag<even::Outcome, Stamp>),
+    Abbrechen(komm::UmschlagAbbrechen<Stamp>),
 }
 
-impl From<Umschlag<odd::Outcome, Stamp>> for Order {
-    fn from(umschlag: Umschlag<odd::Outcome, Stamp>) -> Order {
+impl From<komm::Umschlag<odd::Outcome, Stamp>> for Order {
+    fn from(umschlag: komm::Umschlag<odd::Outcome, Stamp>) -> Order {
         Order::OddUmschlag(umschlag)
     }
 }
 
-impl From<Umschlag<even::Outcome, Stamp>> for Order {
-    fn from(umschlag: Umschlag<even::Outcome, Stamp>) -> Order {
+impl From<komm::Umschlag<even::Outcome, Stamp>> for Order {
+    fn from(umschlag: komm::Umschlag<even::Outcome, Stamp>) -> Order {
         Order::EvenUmschlag(umschlag)
     }
 }
 
-impl From<UmschlagAbbrechen<Stamp>> for Order {
-    fn from(umschlag_abbrechen: UmschlagAbbrechen<Stamp>) -> Order {
+impl From<komm::UmschlagAbbrechen<Stamp>> for Order {
+    fn from(umschlag_abbrechen: komm::UmschlagAbbrechen<Stamp>) -> Order {
         Order::Abbrechen(umschlag_abbrechen)
     }
 }
 
-type OddJob = odd::Job<Rueckkopplung<Order, Stamp>>;
-type OddOrder = odd::Order<Rueckkopplung<Order, Stamp>>;
-type EvenJob = even::Job<Rueckkopplung<Order, Stamp>>;
-type EvenOrder = even::Order<Rueckkopplung<Order, Stamp>>;
+type OddJob = odd::Job<komm::Rueckkopplung<Order, Stamp>>;
+type OddOrder = odd::Order<komm::Rueckkopplung<Order, Stamp>>;
+type EvenJob = even::Job<komm::Rueckkopplung<Order, Stamp>>;
+type EvenOrder = even::Order<komm::Rueckkopplung<Order, Stamp>>;
 
 struct Welt {
     odd_meister: Meister<odd::Welt, OddOrder>,
     even_meister: Meister<even::Welt, EvenOrder>,
-    sendegeraet: Sendegeraet<Order>,
 }
 
 enum Job {
     Odd(OddJob),
     Even(EvenJob),
-    Driver(SklaveJob<Welt, Order>),
+    Driver(komm::SklaveJob<Welt, Order>),
 }
 
-impl From<SklaveJob<Welt, Order>> for Job {
-    fn from(job: SklaveJob<Welt, Order>) -> Job {
+impl From<komm::SklaveJob<Welt, Order>> for Job {
+    fn from(job: komm::SklaveJob<Welt, Order>) -> Job {
         Job::Driver(job)
     }
 }
@@ -160,14 +148,12 @@ impl edeltraud::Job for Job {
                                         mehr_befehle,
                                     } => {
                                         mehr_befehle
-                                            .sklavenwelt()
                                             .even_meister
                                             .befehl(
                                                 even::Order::Is {
                                                     value,
                                                     echo: mehr_befehle
-                                                        .sklavenwelt()
-                                                        .sendegeraet
+                                                        .sendegeraet()
                                                         .rueckkopplung(Stamp {
                                                             current_value: value,
                                                             current_guess: ValueType::Even,
@@ -180,7 +166,7 @@ impl edeltraud::Job for Job {
                                         befehle = mehr_befehle;
                                     },
                                     SklavenBefehl::Mehr {
-                                        befehl: Order::OddUmschlag(Umschlag {
+                                        befehl: Order::OddUmschlag(komm::Umschlag {
                                             inhalt: odd::Outcome::False,
                                             stamp: Stamp { current_guess, reply_tx, .. },
                                         }),
@@ -191,21 +177,19 @@ impl edeltraud::Job for Job {
                                         befehle = mehr_befehle;
                                     },
                                     SklavenBefehl::Mehr {
-                                        befehl: Order::OddUmschlag(Umschlag {
+                                        befehl: Order::OddUmschlag(komm::Umschlag {
                                             inhalt: odd::Outcome::NotSure,
                                             stamp: Stamp { current_value, current_guess, reply_tx, },
                                         }),
                                         mehr_befehle,
                                     } => {
                                         mehr_befehle
-                                            .sklavenwelt()
                                             .even_meister
                                             .befehl(
                                                 even::Order::Is {
                                                     value: current_value - 1,
                                                     echo: mehr_befehle
-                                                        .sklavenwelt()
-                                                        .sendegeraet
+                                                        .sendegeraet()
                                                         .rueckkopplung(Stamp {
                                                             current_value: current_value - 1,
                                                             current_guess: current_guess.neg(),
@@ -218,7 +202,7 @@ impl edeltraud::Job for Job {
                                         befehle = mehr_befehle;
                                     },
                                     SklavenBefehl::Mehr {
-                                        befehl: Order::EvenUmschlag(Umschlag {
+                                        befehl: Order::EvenUmschlag(komm::Umschlag {
                                             inhalt: even::Outcome::True,
                                             stamp: Stamp { current_guess, reply_tx, .. },
                                         }),
@@ -229,7 +213,7 @@ impl edeltraud::Job for Job {
                                         befehle = mehr_befehle;
                                     },
                                     SklavenBefehl::Mehr {
-                                        befehl: Order::EvenUmschlag(Umschlag {
+                                        befehl: Order::EvenUmschlag(komm::Umschlag {
                                             inhalt: even::Outcome::NotSure,
                                             stamp: Stamp {
                                                 current_value,
@@ -240,14 +224,12 @@ impl edeltraud::Job for Job {
                                         mehr_befehle,
                                     } => {
                                         mehr_befehle
-                                            .sklavenwelt()
                                             .odd_meister
                                             .befehl(
                                                 odd::Order::Is {
                                                     value: current_value - 1,
                                                     echo: mehr_befehle
-                                                        .sklavenwelt()
-                                                        .sendegeraet
+                                                        .sendegeraet()
                                                         .rueckkopplung(Stamp {
                                                             current_value: current_value - 1,
                                                             current_guess: current_guess.neg(),
@@ -260,7 +242,7 @@ impl edeltraud::Job for Job {
                                         befehle = mehr_befehle;
                                     },
                                     SklavenBefehl::Mehr {
-                                        befehl: Order::Abbrechen(UmschlagAbbrechen {
+                                        befehl: Order::Abbrechen(komm::UmschlagAbbrechen {
                                             stamp: Stamp { current_value, current_guess, .. },
                                         }),
                                         ..
@@ -354,8 +336,8 @@ mod odd {
     where P: edeltraud::ThreadPool<Job<E>>,
           E: komm::Echo<Outcome> + Send + 'static,
     {
-        let freie = Freie::new();
-        freie.versklaven(Welt, thread_pool).unwrap()
+        let freie = Freie::new(Welt);
+        freie.versklaven(thread_pool).unwrap()
     }
 }
 
@@ -435,7 +417,7 @@ mod even {
     where P: edeltraud::ThreadPool<Job<E>>,
           E: komm::Echo<Outcome> + Send + 'static,
     {
-        let freie = Freie::new();
-        freie.versklaven(Welt, thread_pool).unwrap()
+        let freie = Freie::new(Welt);
+        freie.versklaven(thread_pool).unwrap()
     }
 }

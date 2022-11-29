@@ -29,7 +29,10 @@ fn basic() {
     let adapter =
         utils::mpsc_forward_adapter::Adapter::versklaven(sync_tx, &thread_pool).unwrap();
 
-    let rueckkopplung = adapter.sklave_sendegeraet.rueckkopplung(LocalStamp);
+    let rueckkopplung = adapter
+        .sklave_meister
+        .sendegeraet()
+        .rueckkopplung(LocalStamp);
     drop(rueckkopplung);
 
     assert!(matches!(

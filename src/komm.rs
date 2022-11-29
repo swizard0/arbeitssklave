@@ -1,5 +1,9 @@
 use std::{
     fmt,
+    ops::{
+        Deref,
+        DerefMut,
+    },
     sync::{
         Arc,
         atomic::{
@@ -15,15 +19,160 @@ use std::{
 
 use crate::{
     Freie,
-    Meister,
-    SklaveJob,
+    Gehorsam,
+    SklavenBefehl,
+    SklavenBefehle,
+    Meister as MeisterBase,
+    SklaveJob as SklaveBaseJob,
     Error as ArbeitssklaveError,
 };
 
 #[derive(Debug)]
 pub enum Error {
     Meister(ArbeitssklaveError),
+    SendegeraetBefehl(ArbeitssklaveError),
     Edeltraud(edeltraud::SpawnError),
+}
+
+// crate::Freie
+
+impl<W, B> Freie<W, B> {
+    pub fn versklaven_komm<P, J>(self, thread_pool: &P) -> Result<Meister<W, B>, Error>
+    where P: edeltraud::ThreadPool<J> + Clone + Send + Sync + 'static,
+          J: edeltraud::Job + From<SklaveJob<W, B>> + Sync,
+          B: Send + 'static,
+          W: Send + 'static,
+    {
+        let meister_base = MeisterBase { inner: self.inner, };
+        let sendegeraet = Sendegeraet::starten(
+            meister_base.clone(),
+            thread_pool.clone(),
+        )?;
+        let meister_komm = Meister::new(meister_base, sendegeraet);
+        meister_komm.whip(thread_pool)
+            .map_err(Error::Meister)?;
+        Ok(meister_komm)
+    }
+}
+
+// Meister
+
+pub struct Meister<W, B> {
+    meister_base: MeisterBase<W, B>,
+    sendegeraet: Sendegeraet<B>,
+}
+
+impl<W, B> Meister<W, B> {
+    fn new(meister_base: MeisterBase<W, B>, sendegeraet: Sendegeraet<B>) -> Self {
+        Self { meister_base, sendegeraet, }
+    }
+
+    pub fn sendegeraet(&self) -> &Sendegeraet<B> {
+        &self.sendegeraet
+    }
+
+    fn whip<P, J>(&self, thread_pool: &P) -> Result<(), ArbeitssklaveError>
+    where P: edeltraud::ThreadPool<J>,
+          J: edeltraud::Job + From<SklaveJob<W, B>>,
+    {
+        let sklave_job = SklaveJob {
+            base_job: SklaveBaseJob {
+                inner: self.meister_base.inner.clone(),
+            },
+            sendegeraet: self.sendegeraet.clone(),
+        };
+        edeltraud::job(thread_pool, sklave_job)
+            .map_err(ArbeitssklaveError::Edeltraud)
+    }
+
+    pub fn befehl<P, J>(&self, order: B, thread_pool: &P) -> Result<(), ArbeitssklaveError>
+    where P: edeltraud::ThreadPool<J>,
+          J: edeltraud::Job + From<SklaveJob<W, B>>,
+    {
+        self.meister_base.befehl_common(order, || self.whip(thread_pool))
+    }
+}
+
+// SklaveJob
+
+pub struct SklaveJob<W, B> {
+    base_job: SklaveBaseJob<W, B>,
+    sendegeraet: Sendegeraet<B>,
+}
+
+impl<W, B> SklaveJob<W, B> {
+    pub fn zu_ihren_diensten(self) -> Result<Gehorsam<SklaveJob<W, B>>, ArbeitssklaveError> {
+        Ok(match self.base_job.zu_ihren_diensten()? {
+            Gehorsam::Rasten =>
+                Gehorsam::Rasten,
+            Gehorsam::Machen { befehle, } =>
+                Gehorsam::Machen {
+                    befehle: SklavenBefehle {
+                        sklave_job: SklaveJob {
+                            base_job: befehle.sklave_job,
+                            sendegeraet: self.sendegeraet,
+                        },
+                    },
+                },
+        })
+    }
+
+    pub fn meister(&self) -> Meister<W, B> {
+        Meister::new(self.base_job.meister(), self.sendegeraet.clone())
+    }
+
+    pub fn sendegeraet(&self) -> &Sendegeraet<B> {
+        &self.sendegeraet
+    }
+
+    pub fn sklavenwelt(&self) -> &W {
+        self.base_job.sklavenwelt()
+    }
+
+    pub fn sklavenwelt_mut(&mut self) -> &mut W {
+        self.base_job.sklavenwelt_mut()
+    }
+}
+
+impl<W, B> Deref for SklaveJob<W, B> {
+    type Target = W;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base_job
+    }
+}
+
+impl<W, B> DerefMut for SklaveJob<W, B> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.base_job
+    }
+}
+
+impl<W, B> SklavenBefehle<SklaveJob<W, B>> {
+    pub fn befehl(self) -> SklavenBefehl<SklaveJob<W, B>, B> {
+        let base_sklaven_befehle = SklavenBefehle {
+            sklave_job: self.sklave_job.base_job,
+        };
+        match base_sklaven_befehle.befehl() {
+            SklavenBefehl::Mehr { befehl, mehr_befehle, } =>
+                SklavenBefehl::Mehr {
+                    befehl,
+                    mehr_befehle: SklavenBefehle {
+                        sklave_job: SklaveJob {
+                            base_job: mehr_befehle.sklave_job,
+                            sendegeraet: self.sklave_job.sendegeraet,
+                        },
+                    },
+                },
+            SklavenBefehl::Ende { sklave_job, } =>
+                SklavenBefehl::Ende {
+                    sklave_job: SklaveJob {
+                        base_job: sklave_job,
+                        sendegeraet: self.sklave_job.sendegeraet,
+                    },
+                },
+        }
+    }
 }
 
 // Sendegeraet
@@ -34,11 +183,11 @@ pub struct Sendegeraet<B> {
 }
 
 trait SendegeraetMeister<B> where Self: Send + Sync + 'static {
-    fn befehl(&self, order: B) -> Result<(), Error>;
+    fn befehl(&self, parent: Sendegeraet<B>, order: B) -> Result<(), Error>;
 }
 
 struct SendegeraetInner<W, B, P, J> {
-    meister: Meister<W, B>,
+    meister_base: MeisterBase<W, B>,
     thread_pool: P,
     _marker: PhantomData<J>,
 }
@@ -49,22 +198,22 @@ where P: edeltraud::ThreadPool<J> + Send + Sync + 'static,
       W: Send + 'static,
       B: Send + 'static,
 {
-    fn befehl(&self, order: B) -> Result<(), Error> {
-        self.meister.befehl(order, &self.thread_pool)
-            .map_err(Error::Meister)
+    fn befehl(&self, parent: Sendegeraet<B>, order: B) -> Result<(), Error> {
+        let meister_komm = Meister::new(self.meister_base.clone(), parent);
+        meister_komm.befehl(order, &self.thread_pool)
+            .map_err(Error::SendegeraetBefehl)
     }
 }
 
 impl<B> Sendegeraet<B> where B: Send + 'static {
-    pub fn starten<W, P, J>(freie: &Freie<W, B>, thread_pool: P) -> Result<Self, Error>
+    pub(crate) fn starten<W, P, J>(meister_base: MeisterBase<W, B>, thread_pool: P) -> Result<Self, Error>
     where P: edeltraud::ThreadPool<J> + Send + Sync + 'static,
           J: edeltraud::Job + From<SklaveJob<W, B>> + Sync,
           W: Send + 'static,
     {
-        let meister = Meister { inner: freie.inner.clone(), };
         let stream_counter = Arc::new(AtomicUsize::new(0));
         let inner = SendegeraetInner {
-            meister,
+            meister_base,
             thread_pool,
             _marker: PhantomData,
         };
@@ -75,7 +224,7 @@ impl<B> Sendegeraet<B> where B: Send + 'static {
     }
 
     pub fn befehl(&self, order: B) -> Result<(), Error> {
-        self.meister.befehl(order)
+        self.meister.befehl(self.clone(), order)
     }
 
     pub fn rueckkopplung<S>(&self, stamp: S) -> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {

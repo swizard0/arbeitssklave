@@ -136,17 +136,15 @@ fn many_to_one() {
         .unwrap();
 
     let (done_tx, done_rx) = mpsc::channel();
-    let consumer_meister = Freie::new()
-        .versklaven(
-            ConsumerWelt {
-                total_orders: 0,
-                feeders_regs: 0,
-                feeders_count: 0,
-                local_counter: 0,
-                done_tx,
-            },
-            &thread_pool,
-        )
+    let consumer_meister = Freie::new(
+        ConsumerWelt {
+            total_orders: 0,
+            feeders_regs: 0,
+            feeders_count: 0,
+            local_counter: 0,
+            done_tx,
+        })
+        .versklaven(&thread_pool)
         .unwrap();
 
     for _ in 0 .. JOBS_COUNT {
