@@ -10,6 +10,10 @@ use std::{
         atomic,
         Arc,
         Mutex,
+        TryLockError,
+    },
+    collections::{
+        VecDeque,
     },
 };
 
@@ -47,7 +51,7 @@ struct SklaveJobInner<W, B> {
 
 struct Sklavenwelt<W, B> {
     sklavenwelt: W,
-    taken_orders: Vec<B>,
+    taken_orders: VecDeque<B>,
 }
 
 struct Inner<W, B> {
@@ -158,7 +162,7 @@ impl<W, B> Freie<W, B> {
     {
         let meister = Meister { inner: self.inner, };
         meister.whip(
-            Box::new(Sklavenwelt { sklavenwelt, taken_orders: Vec::new(), }),
+            Box::new(Sklavenwelt { sklavenwelt, taken_orders: VecDeque::new(), }),
             thread_pool,
         )?;
         Ok(meister)
@@ -230,6 +234,7 @@ impl<W, B> SklaveJob<W, B> {
         let mut sklave_job_inner = self.maybe_sklave_job_inner
             .take()
             .ok_or(Error::Terminated)?;
+        let backoff = crossbeam::utils::Backoff::new();
         'outer: loop {
             let prev_tag = sklave_job_inner.inner.touch_tag.load();
             let (is_terminated, is_resting, orders_count) = TouchTag::decompose(prev_tag);
@@ -246,22 +251,30 @@ impl<W, B> SklaveJob<W, B> {
                 }
 
                 let new_tag = TouchTag::compose(is_terminated, true, 0);
-                let mut activity_lock = sklave_job_inner.inner.activity.lock()
-                    .map_err(|_| Error::MutexIsPoisoned)?;
-                if !sklave_job_inner.inner.touch_tag.try_set(prev_tag, new_tag) {
-                    continue 'outer;
+                match sklave_job_inner.inner.activity.try_lock() {
+                    Ok(mut activity_lock) => {
+                        if !sklave_job_inner.inner.touch_tag.try_set(prev_tag, new_tag) {
+                            backoff.snooze();
+                            continue 'outer;
+                        }
+                        *activity_lock = Activity::Rest(sklave_job_inner.welt);
+                        return Ok(Gehorsam::Rasten);
+                    },
+                    Err(TryLockError::WouldBlock) => {
+                        backoff.snooze();
+                        continue 'outer;
+                    },
+                    Err(TryLockError::Poisoned(..)) =>
+                        return Err(Error::MutexIsPoisoned),
                 }
-                *activity_lock = Activity::Rest(sklave_job_inner.welt);
-                return Ok(Gehorsam::Rasten);
             } else {
                 let new_tag = TouchTag::compose(is_terminated, false, orders_count - 1);
                 if !sklave_job_inner.inner.touch_tag.try_set(prev_tag, new_tag) {
                     continue 'outer;
                 }
-                let backoff = crossbeam::utils::Backoff::new();
                 loop {
                     if let Some(order) = sklave_job_inner.inner.orders.pop() {
-                        sklave_job_inner.welt.taken_orders.push(order);
+                        sklave_job_inner.welt.taken_orders.push_back(order);
                         continue 'outer;
                     }
                     backoff.snooze();
@@ -306,7 +319,7 @@ impl<W, B> SklavenBefehle<W, B> {
             .maybe_sklave_job_inner
             .as_mut()
             .unwrap();
-        match inner.welt.taken_orders.pop() {
+        match inner.welt.taken_orders.pop_front() {
             Some(befehl) =>
                 SklavenBefehl::Mehr { befehl, mehr_befehle: self, },
             None =>
