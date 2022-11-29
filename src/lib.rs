@@ -52,7 +52,7 @@ struct Inner<W, B> {
 }
 
 unsafe impl<W, B> Sync for Inner<W, B> { }
-unsafe impl<W, B> Send for Inner<W, B> { }
+unsafe impl<W, B> Send for Inner<W, B> where W: Send, B: Send { }
 
 impl<W, B> Drop for Inner<W, B> {
     fn drop(&mut self) {
