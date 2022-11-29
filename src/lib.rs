@@ -105,8 +105,8 @@ impl TouchTag {
             .compare_exchange(
                 prev_tag,
                 new_tag,
-                atomic::Ordering::SeqCst,
-                atomic::Ordering::SeqCst,
+                atomic::Ordering::Acquire,
+                atomic::Ordering::Relaxed,
             )
             .is_ok()
     }
@@ -271,7 +271,8 @@ impl<W, B> SklaveJob<W, B> {
                         return Ok(Gehorsam::Rasten);
                     },
                     Err(TryLockError::WouldBlock) => {
-                        unreachable!("it is assumed that activity lock should not be held by anyone but sklave");
+                        backoff.snooze();
+                        continue 'outer;
                     },
                     Err(TryLockError::Poisoned(..)) =>
                         return Err(Error::MutexIsPoisoned),
