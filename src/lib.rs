@@ -174,21 +174,29 @@ impl<W, B> Meister<W, B> {
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
+        let backoff = crossbeam::utils::Backoff::new();
         loop {
             let prev_tag = self.inner.touch_tag.load();
             let (is_terminated, is_resting, orders_count) = TouchTag::decompose(prev_tag);
             if is_terminated {
                 return Err(Error::Terminated);
             }
+
             let new_tag = TouchTag::compose(is_terminated, false, orders_count + 1);
-            if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
-                continue;
-            }
             if is_resting {
-                let prev_activity = {
-                    let mut activity_lock = self.inner.activity.lock()
-                        .map_err(|_| Error::MutexIsPoisoned)?;
-                    mem::replace(&mut *activity_lock, Activity::Work)
+                let prev_activity = match self.inner.activity.try_lock() {
+                    Ok(mut activity_lock) => {
+                        if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
+                            continue;
+                        }
+                        mem::replace(&mut *activity_lock, Activity::Work)
+                    },
+                    Err(TryLockError::WouldBlock) => {
+                        backoff.snooze();
+                        continue;
+                    },
+                    Err(TryLockError::Poisoned(..)) =>
+                        return Err(Error::MutexIsPoisoned),
                 };
                 match prev_activity {
                     Activity::Rest(welt) =>
@@ -196,7 +204,10 @@ impl<W, B> Meister<W, B> {
                     Activity::Work =>
                         unreachable!("totally unexpected Activity::Work after taking `is_resting` flag"),
                 }
+            } else if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
+                continue;
             }
+
             self.inner.orders.push(order);
             return Ok(());
         }
@@ -254,15 +265,13 @@ impl<W, B> SklaveJob<W, B> {
                 match sklave_job_inner.inner.activity.try_lock() {
                     Ok(mut activity_lock) => {
                         if !sklave_job_inner.inner.touch_tag.try_set(prev_tag, new_tag) {
-                            backoff.snooze();
                             continue 'outer;
                         }
                         *activity_lock = Activity::Rest(sklave_job_inner.welt);
                         return Ok(Gehorsam::Rasten);
                     },
                     Err(TryLockError::WouldBlock) => {
-                        backoff.snooze();
-                        continue 'outer;
+                        unreachable!("it is assumed that activity lock should not be held by anyone but sklave");
                     },
                     Err(TryLockError::Poisoned(..)) =>
                         return Err(Error::MutexIsPoisoned),
@@ -272,6 +281,7 @@ impl<W, B> SklaveJob<W, B> {
                 if !sklave_job_inner.inner.touch_tag.try_set(prev_tag, new_tag) {
                     continue 'outer;
                 }
+                backoff.reset();
                 loop {
                     if let Some(order) = sklave_job_inner.inner.orders.pop() {
                         sklave_job_inner.welt.taken_orders.push_back(order);
