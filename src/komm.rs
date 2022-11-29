@@ -62,6 +62,15 @@ pub struct Meister<W, B> {
     sendegeraet: Sendegeraet<B>,
 }
 
+impl<W, B> Clone for Meister<W, B> {
+    fn clone(&self) -> Self {
+        Self {
+            meister_base: self.meister_base.clone(),
+            sendegeraet: self.sendegeraet.clone(),
+        }
+    }
+}
+
 impl<W, B> Meister<W, B> {
     fn new(meister_base: MeisterBase<W, B>, sendegeraet: Sendegeraet<B>) -> Self {
         Self { meister_base, sendegeraet, }
