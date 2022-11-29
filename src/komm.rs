@@ -133,14 +133,6 @@ impl<W, B> SklaveJob<W, B> {
     pub fn sendegeraet(&self) -> &Sendegeraet<B> {
         &self.sendegeraet
     }
-
-    pub fn sklavenwelt(&self) -> &W {
-        self.base_job.sklavenwelt()
-    }
-
-    pub fn sklavenwelt_mut(&mut self) -> &mut W {
-        self.base_job.sklavenwelt_mut()
-    }
 }
 
 impl<W, B> Deref for SklaveJob<W, B> {

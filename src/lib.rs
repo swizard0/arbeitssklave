@@ -257,15 +257,6 @@ impl<W, B> SklaveJob<W, B> {
         let sklavenwelt_ptr = self.inner.sklavenwelt.as_ptr();
         unsafe { &mut *sklavenwelt_ptr }
     }
-
-
-    pub fn sklavenwelt(&self) -> &W {
-        &self.reach_sklavenwelt().sklavenwelt
-    }
-
-    pub fn sklavenwelt_mut(&mut self) -> &mut W {
-        &mut self.reach_sklavenwelt_mut().sklavenwelt
-    }
 }
 
 pub enum Gehorsam<S> {

@@ -84,7 +84,7 @@ fn many_to_one() {
                                             mehr_befehle,
                                         } => {
                                             befehle = mehr_befehle;
-                                            let sklavenwelt = befehle.sklavenwelt_mut();
+                                            let sklavenwelt = &mut *befehle;
                                             sklavenwelt.total_orders += 1;
                                             sklavenwelt.feeders_regs += 1;
                                             sklavenwelt.feeders_count += 1;
@@ -94,7 +94,7 @@ fn many_to_one() {
                                             mehr_befehle,
                                         } => {
                                             befehle = mehr_befehle;
-                                            let sklavenwelt = befehle.sklavenwelt_mut();
+                                            let sklavenwelt = &mut *befehle;
                                             sklavenwelt.total_orders += 1;
                                             assert!(sklavenwelt.feeders_count > 0);
                                             sklavenwelt.feeders_count -= 1;
@@ -111,7 +111,7 @@ fn many_to_one() {
                                             mehr_befehle,
                                         } => {
                                             befehle = mehr_befehle;
-                                            let sklavenwelt = befehle.sklavenwelt_mut();
+                                            let sklavenwelt = &mut *befehle;
                                             sklavenwelt.total_orders += 1;
                                             sklavenwelt.local_counter += value;
                                         },
