@@ -12,7 +12,7 @@ use crate::{
 
 #[test]
 fn stress_8() {
-    const INCS_COUNT: usize = 131072 * 2;
+    const INCS_COUNT: usize = 131072;
     const JOBS_COUNT: usize = 8;
 
     enum ConsumerOrder {
