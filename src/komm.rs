@@ -85,9 +85,7 @@ impl<W, B> Meister<W, B> {
           J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
         let sklave_job = SklaveJob {
-            base_job: SklaveBaseJob {
-                inner: self.meister_base.inner.clone(),
-            },
+            base_job: SklaveBaseJob::new(self.meister_base.inner.clone()),
             sendegeraet: self.sendegeraet.clone(),
         };
         edeltraud::job(thread_pool, sklave_job)

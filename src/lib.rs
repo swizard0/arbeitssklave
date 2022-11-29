@@ -38,6 +38,13 @@ impl<W, B> Clone for Meister<W, B> {
 
 pub struct SklaveJob<W, B> {
     inner: Arc<Inner<W, B>>,
+    rasten_mark: bool,
+}
+
+impl<W, B> SklaveJob<W, B> {
+    fn new(inner: Arc<Inner<W, B>>) -> Self {
+        Self { inner, rasten_mark: false, }
+    }
 }
 
 struct Sklavenwelt<W, B> {
@@ -81,14 +88,14 @@ impl Default for TouchTag {
 
 struct TouchTagDecoded {
     is_terminated: bool,
-    is_resting: bool,
+    is_ready: bool,
     orders_count: usize,
 }
 
 impl TouchTag {
     const ORDERS_COUNT_MASK: u64 = u32::MAX as u64;
-    const RESTING_BIT: u64 = Self::ORDERS_COUNT_MASK.wrapping_add(1);
-    const TERMINATED_BIT: u64 = Self::RESTING_BIT.wrapping_shl(1);
+    const READY_BIT: u64 = Self::ORDERS_COUNT_MASK.wrapping_add(1);
+    const TERMINATED_BIT: u64 = Self::READY_BIT.wrapping_shl(1);
 
     fn load(&self) -> u64 {
         self.tag.load(atomic::Ordering::SeqCst)
@@ -108,15 +115,15 @@ impl TouchTag {
     fn decompose(tag: u64) -> TouchTagDecoded {
         TouchTagDecoded {
             is_terminated: tag & Self::TERMINATED_BIT != 0,
-            is_resting: tag & Self::RESTING_BIT != 0,
+            is_ready: tag & Self::READY_BIT != 0,
             orders_count: (tag & Self::ORDERS_COUNT_MASK) as usize,
         }
     }
 
     fn compose(decoded: TouchTagDecoded) -> u64 {
         let mut tag = decoded.orders_count as u64;
-        if decoded.is_resting {
-            tag |= Self::RESTING_BIT;
+        if decoded.is_ready {
+            tag |= Self::READY_BIT;
         }
         if decoded.is_terminated {
             tag |= Self::TERMINATED_BIT;
@@ -169,14 +176,14 @@ impl<W, B> Meister<W, B> {
             }
 
             let new_tag = TouchTag::compose(TouchTagDecoded {
-                is_terminated: false,
-                is_resting: false,
+                is_ready: false,
                 orders_count: decoded.orders_count + 1,
+                ..decoded
             });
             if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
                 continue;
             }
-            if decoded.is_resting {
+            if decoded.is_ready {
                 whip()?;
             }
 
@@ -189,7 +196,7 @@ impl<W, B> Meister<W, B> {
     where P: edeltraud::ThreadPool<J>,
           J: edeltraud::Job + From<SklaveJob<W, B>>,
     {
-        let sklave_job = SklaveJob { inner: self.inner.clone(), };
+        let sklave_job = SklaveJob::new(self.inner.clone());
         edeltraud::job(thread_pool, sklave_job)
             .map_err(Error::Edeltraud)
     }
@@ -201,7 +208,7 @@ impl<W, B> SklaveJob<W, B> {
         'outer: loop {
             let prev_tag = self.inner.touch_tag.load();
             let decoded = TouchTag::decompose(prev_tag);
-            assert!(!decoded.is_resting);
+            assert!(!decoded.is_ready);
             if decoded.is_terminated {
                 return Err(Error::Terminated);
             }
@@ -213,19 +220,20 @@ impl<W, B> SklaveJob<W, B> {
                 }
 
                 let new_tag = TouchTag::compose(TouchTagDecoded {
-                    is_terminated: false,
-                    is_resting: true,
+                    is_ready: true,
                     orders_count: 0,
+                    ..decoded
                 });
                 if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
                     continue 'outer;
                 }
+
+                self.rasten_mark = true;
                 return Ok(Gehorsam::Rasten);
             } else {
                 let new_tag = TouchTag::compose(TouchTagDecoded {
-                    is_terminated: false,
-                    is_resting: false,
                     orders_count: decoded.orders_count - 1,
+                    ..decoded
                 });
                 if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
                     continue 'outer;
@@ -318,18 +326,20 @@ impl<S> DerefMut for SklavenBefehle<S> {
 
 impl<W, B> Drop for SklaveJob<W, B> {
     fn drop(&mut self) {
-        loop {
-            let prev_tag = self.inner.touch_tag.load();
-            let decoded = TouchTag::decompose(prev_tag);
-            if decoded.is_resting {
-                break;
-            }
-            let new_tag = TouchTag::compose(TouchTagDecoded {
-                is_terminated: true,
-                ..decoded
-            });
-            if self.inner.touch_tag.try_set(prev_tag, new_tag) {
-                break;
+        if !self.rasten_mark {
+            loop {
+                let prev_tag = self.inner.touch_tag.load();
+                let decoded = TouchTag::decompose(prev_tag);
+                if decoded.is_terminated {
+                    break;
+                }
+                let new_tag = TouchTag::compose(TouchTagDecoded {
+                    is_terminated: true,
+                    ..decoded
+                });
+                if self.inner.touch_tag.try_set(prev_tag, new_tag) {
+                    break;
+                }
             }
         }
     }
