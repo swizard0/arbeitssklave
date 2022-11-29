@@ -105,8 +105,8 @@ impl TouchTag {
             .compare_exchange(
                 prev_tag,
                 new_tag,
-                atomic::Ordering::Acquire,
-                atomic::Ordering::Relaxed,
+                atomic::Ordering::SeqCst,
+                atomic::Ordering::SeqCst,
             )
             .is_ok()
     }
