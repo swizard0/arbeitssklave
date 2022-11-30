@@ -61,14 +61,6 @@ struct Inner<W, B> {
 }
 
 unsafe impl<W, B> Sync for Inner<W, B> { }
-// unsafe impl<W, B> Send for Inner<W, B> where W: Send, B: Send { }
-
-// impl<W, B> Drop for Inner<W, B> {
-//     fn drop(&mut self) {
-//         let _sklavenwelt_box =
-//             unsafe { Box::from_raw(self.sklavenwelt.as_ptr()) };
-//     }
-// }
 
 #[derive(Debug)]
 pub enum Error {
