@@ -15,9 +15,10 @@ use crate::{
 
 #[test]
 fn basic() {
-    let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
+    let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
         .build()
         .unwrap();
+    let thread_pool = edeltraud.handle();
 
     let odd_meister = odd::start(&edeltraud::ThreadPoolMap::new(&thread_pool));
     let even_meister = even::start(&edeltraud::ThreadPoolMap::new(&thread_pool));

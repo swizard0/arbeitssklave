@@ -78,9 +78,10 @@ fn stress_8() {
         })
         .unwrap();
 
-    let thread_pool: edeltraud::Edeltraud<FeederJob> = edeltraud::Builder::new()
+    let edeltraud: edeltraud::Edeltraud<FeederJob> = edeltraud::Builder::new()
         .build()
         .unwrap();
+    let thread_pool = edeltraud.handle();
 
     for _ in 0 .. JOBS_COUNT {
         edeltraud::ThreadPool::spawn(&thread_pool, FeederJob { consumer_meister: consumer_meister.clone(), }).unwrap();

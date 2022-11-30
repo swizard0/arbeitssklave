@@ -159,9 +159,10 @@ fn basic() {
         }
     }
 
-    let thread_pool: edeltraud::Edeltraud<LocalJob> = edeltraud::Builder::new()
+    let edeltraud: edeltraud::Edeltraud<LocalJob> = edeltraud::Builder::new()
         .build()
         .unwrap();
+    let thread_pool = edeltraud.handle();
 
     let (tx, rx) = mpsc::channel();
 

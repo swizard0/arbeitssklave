@@ -21,9 +21,10 @@ fn basic() {
         }
     }
 
-    let thread_pool: edeltraud::Edeltraud<utils::mpsc_forward_adapter::Job<LocalOrder>> = edeltraud::Builder::new()
+    let edeltraud: edeltraud::Edeltraud<utils::mpsc_forward_adapter::Job<LocalOrder>> = edeltraud::Builder::new()
         .build()
         .unwrap();
+    let thread_pool = edeltraud.handle();
 
     let (sync_tx, sync_rx) = mpsc::sync_channel(0);
     let adapter =

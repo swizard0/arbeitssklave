@@ -131,9 +131,10 @@ fn many_to_one() {
         done_tx: mpsc::Sender<usize>,
     }
 
-    let thread_pool: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
+    let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
         .build()
         .unwrap();
+    let thread_pool = edeltraud.handle();
 
     let (done_tx, done_rx) = mpsc::channel();
     let consumer_meister = Freie::new(
