@@ -1,8 +1,10 @@
 use std::{
-    ptr,
     ops::{
         Deref,
         DerefMut,
+    },
+    cell::{
+        UnsafeCell,
     },
     sync::{
         atomic,
@@ -55,18 +57,18 @@ struct Sklavenwelt<W, B> {
 struct Inner<W, B> {
     orders: crossbeam::queue::SegQueue<B>,
     touch_tag: TouchTag,
-    sklavenwelt: ptr::NonNull<Sklavenwelt<W, B>>,
+    sklavenwelt: UnsafeCell<Sklavenwelt<W, B>>,
 }
 
 unsafe impl<W, B> Sync for Inner<W, B> { }
-unsafe impl<W, B> Send for Inner<W, B> where W: Send, B: Send { }
+// unsafe impl<W, B> Send for Inner<W, B> where W: Send, B: Send { }
 
-impl<W, B> Drop for Inner<W, B> {
-    fn drop(&mut self) {
-        let _sklavenwelt_box =
-            unsafe { Box::from_raw(self.sklavenwelt.as_ptr()) };
-    }
-}
+// impl<W, B> Drop for Inner<W, B> {
+//     fn drop(&mut self) {
+//         let _sklavenwelt_box =
+//             unsafe { Box::from_raw(self.sklavenwelt.as_ptr()) };
+//     }
+// }
 
 #[derive(Debug)]
 pub enum Error {
@@ -134,15 +136,14 @@ impl TouchTag {
 
 impl<W, B> Freie<W, B> {
     pub fn new(sklavenwelt: W) -> Self {
-        let boxed_sklavenwelt =
-            Box::new(Sklavenwelt { sklavenwelt, taken_orders: VecDeque::new(), });
-        let sklavenwelt_ref =
-            Box::leak(boxed_sklavenwelt);
         Self {
             inner: Arc::new(Inner {
                 orders: crossbeam::queue::SegQueue::new(),
                 touch_tag: TouchTag::default(),
-                sklavenwelt: sklavenwelt_ref.into(),
+                sklavenwelt: UnsafeCell::new(Sklavenwelt {
+                    sklavenwelt,
+                    taken_orders: VecDeque::new(),
+                }),
             }),
         }
     }
@@ -260,13 +261,11 @@ impl<W, B> SklaveJob<W, B> {
     }
 
     fn reach_sklavenwelt(&self) -> &Sklavenwelt<W, B> {
-        let sklavenwelt_ptr = &self.inner.sklavenwelt;
-        unsafe { sklavenwelt_ptr.as_ref() }
+        unsafe { &*self.inner.sklavenwelt.get() }
     }
 
     fn reach_sklavenwelt_mut(&mut self) -> &mut Sklavenwelt<W, B> {
-        let sklavenwelt_ptr = self.inner.sklavenwelt.as_ptr();
-        unsafe { &mut *sklavenwelt_ptr }
+        unsafe { &mut *self.inner.sklavenwelt.get() }
     }
 }
 
@@ -354,16 +353,14 @@ impl<W, B> Deref for Freie<W, B> {
     type Target = W;
 
     fn deref(&self) -> &Self::Target {
-        let sklavenwelt_ptr = &self.inner.sklavenwelt;
-        let sklavenwelt = unsafe { sklavenwelt_ptr.as_ref() };
+        let sklavenwelt = unsafe { &*self.inner.sklavenwelt.get() };
         &sklavenwelt.sklavenwelt
     }
 }
 
 impl<W, B> DerefMut for Freie<W, B> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        let sklavenwelt_ptr = self.inner.sklavenwelt.as_ptr();
-        let sklavenwelt_mut = unsafe { &mut *sklavenwelt_ptr };
+        let sklavenwelt_mut = unsafe { &mut *self.inner.sklavenwelt.get() };
         &mut sklavenwelt_mut.sklavenwelt
     }
 }
