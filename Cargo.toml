@@ -6,8 +6,7 @@ description = "Primitive actor framework with static dispatching only on top of 
 edition = "2021"
 
 [dependencies]
-# edeltraud = { git = "https://github.com/swizard0/edeltraud.git" }
-edeltraud = { path = "../edeltraud" }
+edeltraud = { git = "https://github.com/swizard0/edeltraud.git" }
 
 crossbeam = "^0.8"
 
