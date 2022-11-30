@@ -101,7 +101,7 @@ impl TouchTag {
     const TERMINATED_BIT: u64 = Self::READY_BIT.wrapping_shl(1);
 
     fn load(&self) -> u64 {
-        self.tag.load(atomic::Ordering::SeqCst)
+        self.tag.load(atomic::Ordering::Relaxed)
     }
 
     fn try_set(&self, prev_tag: u64, new_tag: u64) -> Result<(), u64> {
