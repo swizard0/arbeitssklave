@@ -344,3 +344,21 @@ impl<W, B> Drop for SklaveJob<W, B> {
         }
     }
 }
+
+impl<W, B> Deref for Freie<W, B> {
+    type Target = W;
+
+    fn deref(&self) -> &Self::Target {
+        let sklavenwelt_ptr = &self.inner.sklavenwelt;
+        let sklavenwelt = unsafe { sklavenwelt_ptr.as_ref() };
+        &sklavenwelt.sklavenwelt
+    }
+}
+
+impl<W, B> DerefMut for Freie<W, B> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let sklavenwelt_ptr = self.inner.sklavenwelt.as_ptr();
+        let sklavenwelt_mut = unsafe { &mut *sklavenwelt_ptr };
+        &mut sklavenwelt_mut.sklavenwelt
+    }
+}
