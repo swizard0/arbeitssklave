@@ -57,15 +57,24 @@ struct Sklavenwelt<W, B> {
 struct Inner<W, B> {
     orders: crossbeam::queue::SegQueue<B>,
     touch_tag: TouchTag,
-    sklavenwelt: UnsafeCell<Sklavenwelt<W, B>>,
+    sklavenwelt: UnsafeCell<Option<Sklavenwelt<W, B>>>,
 }
 
 unsafe impl<W, B> Sync for Inner<W, B> { }
+
+fn reach_sklavenwelt<W, B>(inner: &Arc<Inner<W, B>>) -> &Option<Sklavenwelt<W, B>> {
+    unsafe { &*inner.sklavenwelt.get() }
+}
+
+fn reach_sklavenwelt_mut<W, B>(inner: &mut Arc<Inner<W, B>>) -> &mut Option<Sklavenwelt<W, B>> {
+    unsafe { &mut *inner.sklavenwelt.get() }
+}
 
 #[derive(Debug)]
 pub enum Error {
     Edeltraud(edeltraud::SpawnError),
     Terminated,
+    SklavenweltDropped,
 }
 
 struct TouchTag {
@@ -132,10 +141,10 @@ impl<W, B> Freie<W, B> {
             inner: Arc::new(Inner {
                 orders: crossbeam::queue::SegQueue::new(),
                 touch_tag: TouchTag::default(),
-                sklavenwelt: UnsafeCell::new(Sklavenwelt {
+                sklavenwelt: UnsafeCell::new(Some(Sklavenwelt {
                     sklavenwelt,
                     taken_orders: VecDeque::new(),
-                }),
+                })),
             }),
         }
     }
@@ -207,7 +216,10 @@ impl<W, B> SklaveJob<W, B> {
                 return Err(Error::Terminated);
             }
             if decoded.orders_count == 0 {
-                if !self.reach_sklavenwelt().taken_orders.is_empty() {
+                let sklavenwelt = reach_sklavenwelt(&self.inner)
+                    .as_ref()
+                    .ok_or(Error::SklavenweltDropped)?;
+                if !sklavenwelt.taken_orders.is_empty() {
                     return Ok(Gehorsam::Machen {
                         befehle: SklavenBefehle { sklave_job: self, },
                     });
@@ -237,7 +249,10 @@ impl<W, B> SklaveJob<W, B> {
                 let backoff = crossbeam::utils::Backoff::new();
                 loop {
                     if let Some(order) = self.inner.orders.pop() {
-                        self.reach_sklavenwelt_mut().taken_orders.push_back(order);
+                        let sklavenwelt_mut = reach_sklavenwelt_mut(&mut self.inner)
+                            .as_mut()
+                            .ok_or(Error::SklavenweltDropped)?;
+                        sklavenwelt_mut.taken_orders.push_back(order);
                         break;
                     }
                     backoff.snooze();
@@ -250,14 +265,6 @@ impl<W, B> SklaveJob<W, B> {
         Meister {
             inner: self.inner.clone(),
         }
-    }
-
-    fn reach_sklavenwelt(&self) -> &Sklavenwelt<W, B> {
-        unsafe { &*self.inner.sklavenwelt.get() }
-    }
-
-    fn reach_sklavenwelt_mut(&mut self) -> &mut Sklavenwelt<W, B> {
-        unsafe { &mut *self.inner.sklavenwelt.get() }
     }
 }
 
@@ -279,7 +286,10 @@ pub enum SklavenBefehl<S, B> {
 
 impl<W, B> SklavenBefehle<SklaveJob<W, B>> {
     pub fn befehl(mut self) -> SklavenBefehl<SklaveJob<W, B>, B> {
-        match self.sklave_job.reach_sklavenwelt_mut().taken_orders.pop_front() {
+        let sklavenwelt_mut = reach_sklavenwelt_mut(&mut self.sklave_job.inner)
+            .as_mut()
+            .unwrap();
+        match sklavenwelt_mut.taken_orders.pop_front() {
             Some(befehl) =>
                 SklavenBefehl::Mehr { befehl, mehr_befehle: self, },
             None =>
@@ -294,13 +304,19 @@ impl<W, B> Deref for SklaveJob<W, B> {
     type Target = W;
 
     fn deref(&self) -> &Self::Target {
-        &self.reach_sklavenwelt().sklavenwelt
+        reach_sklavenwelt(&self.inner)
+            .as_ref()
+            .map(|s| &s.sklavenwelt)
+            .unwrap()
     }
 }
 
 impl<W, B> DerefMut for SklaveJob<W, B> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.reach_sklavenwelt_mut().sklavenwelt
+        reach_sklavenwelt_mut(&mut self.inner)
+            .as_mut()
+            .map(|s| &mut s.sklavenwelt)
+            .unwrap()
     }
 }
 
@@ -337,6 +353,10 @@ impl<W, B> Drop for SklaveJob<W, B> {
                 }
                 break;
             }
+
+            // drop sklavenwelt
+            let _sklavenwelt =
+                reach_sklavenwelt_mut(&mut self.inner).take();
         }
     }
 }
@@ -345,14 +365,18 @@ impl<W, B> Deref for Freie<W, B> {
     type Target = W;
 
     fn deref(&self) -> &Self::Target {
-        let sklavenwelt = unsafe { &*self.inner.sklavenwelt.get() };
-        &sklavenwelt.sklavenwelt
+        reach_sklavenwelt(&self.inner)
+            .as_ref()
+            .map(|s| &s.sklavenwelt)
+            .unwrap()
     }
 }
 
 impl<W, B> DerefMut for Freie<W, B> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        let sklavenwelt_mut = unsafe { &mut *self.inner.sklavenwelt.get() };
-        &mut sklavenwelt_mut.sklavenwelt
+        reach_sklavenwelt_mut(&mut self.inner)
+            .as_mut()
+            .map(|s| &mut s.sklavenwelt)
+            .unwrap()
     }
 }
