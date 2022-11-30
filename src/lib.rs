@@ -101,7 +101,7 @@ impl TouchTag {
         self.tag.load(atomic::Ordering::SeqCst)
     }
 
-    fn try_set(&self, prev_tag: u64, new_tag: u64) -> bool {
+    fn try_set(&self, prev_tag: u64, new_tag: u64) -> Result<(), u64> {
         self.tag
             .compare_exchange_weak(
                 prev_tag,
@@ -109,7 +109,7 @@ impl TouchTag {
                 atomic::Ordering::Acquire,
                 atomic::Ordering::Relaxed,
             )
-            .is_ok()
+            .map(|_| ())
     }
 
     fn decompose(tag: u64) -> TouchTagDecoded {
@@ -168,8 +168,8 @@ impl<W, B> Meister<W, B> {
     fn befehl_common<F>(&self, order: B, whip: F) -> Result<(), Error>
     where F: FnOnce() -> Result<(), Error>,
     {
+        let mut prev_tag = self.inner.touch_tag.load();
         loop {
-            let prev_tag = self.inner.touch_tag.load();
             let decoded = TouchTag::decompose(prev_tag);
             if decoded.is_terminated {
                 return Err(Error::Terminated);
@@ -180,7 +180,8 @@ impl<W, B> Meister<W, B> {
                 orders_count: decoded.orders_count + 1,
                 ..decoded
             });
-            if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
+            if let Err(changed_tag) = self.inner.touch_tag.try_set(prev_tag, new_tag) {
+                prev_tag = changed_tag;
                 continue;
             }
             if decoded.is_ready {
@@ -205,8 +206,8 @@ impl<W, B> Meister<W, B> {
 
 impl<W, B> SklaveJob<W, B> {
     pub fn zu_ihren_diensten(mut self) -> Result<Gehorsam<SklaveJob<W, B>>, Error> {
-        'outer: loop {
-            let prev_tag = self.inner.touch_tag.load();
+        let mut prev_tag = self.inner.touch_tag.load();
+        loop {
             let decoded = TouchTag::decompose(prev_tag);
             assert!(!decoded.is_ready);
             if decoded.is_terminated {
@@ -224,8 +225,9 @@ impl<W, B> SklaveJob<W, B> {
                     orders_count: 0,
                     ..decoded
                 });
-                if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
-                    continue 'outer;
+                if let Err(changed_tag) = self.inner.touch_tag.try_set(prev_tag, new_tag) {
+                    prev_tag = changed_tag;
+                    continue;
                 }
 
                 self.rasten_mark = true;
@@ -235,14 +237,15 @@ impl<W, B> SklaveJob<W, B> {
                     orders_count: decoded.orders_count - 1,
                     ..decoded
                 });
-                if !self.inner.touch_tag.try_set(prev_tag, new_tag) {
-                    continue 'outer;
+                if let Err(changed_tag) = self.inner.touch_tag.try_set(prev_tag, new_tag) {
+                    prev_tag = changed_tag;
+                    continue;
                 }
                 let backoff = crossbeam::utils::Backoff::new();
                 loop {
                     if let Some(order) = self.inner.orders.pop() {
                         self.reach_sklavenwelt_mut().taken_orders.push_back(order);
-                        continue 'outer;
+                        break;
                     }
                     backoff.snooze();
                 }
@@ -327,8 +330,8 @@ impl<S> DerefMut for SklavenBefehle<S> {
 impl<W, B> Drop for SklaveJob<W, B> {
     fn drop(&mut self) {
         if !self.rasten_mark {
+            let mut prev_tag = self.inner.touch_tag.load();
             loop {
-                let prev_tag = self.inner.touch_tag.load();
                 let decoded = TouchTag::decompose(prev_tag);
                 if decoded.is_terminated {
                     break;
@@ -337,9 +340,11 @@ impl<W, B> Drop for SklaveJob<W, B> {
                     is_terminated: true,
                     ..decoded
                 });
-                if self.inner.touch_tag.try_set(prev_tag, new_tag) {
-                    break;
+                if let Err(changed_tag) = self.inner.touch_tag.try_set(prev_tag, new_tag) {
+                    prev_tag = changed_tag;
+                    continue;
                 }
+                break;
             }
         }
     }
