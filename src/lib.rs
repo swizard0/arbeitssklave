@@ -17,10 +17,10 @@ use std::{
 
 pub mod ewig;
 pub mod komm;
-pub mod utils;
+// pub mod utils;
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 pub struct Freie<W, B> {
     inner: Arc<Inner<W, B>>,
@@ -149,10 +149,7 @@ impl<W, B> Freie<W, B> {
         }
     }
 
-    pub fn versklaven<P, J>(self, thread_pool: &P) -> Result<Meister<W, B>, Error>
-    where P: edeltraud::ThreadPool<J>,
-          J: edeltraud::Job + From<SklaveJob<W, B>>,
-    {
+    pub fn versklaven<J>(self, thread_pool: &edeltraud::Handle<J>) -> Result<Meister<W, B>, Error> where J: From<SklaveJob<W, B>> {
         let meister = Meister { inner: self.inner, };
         meister.whip(thread_pool)?;
         Ok(meister)
@@ -160,10 +157,7 @@ impl<W, B> Freie<W, B> {
 }
 
 impl<W, B> Meister<W, B> {
-    pub fn befehl<P, J>(&self, order: B, thread_pool: &P) -> Result<(), Error>
-    where P: edeltraud::ThreadPool<J>,
-          J: edeltraud::Job + From<SklaveJob<W, B>>,
-    {
+    pub fn befehl<J>(&self, order: B, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
         self.befehl_common(order, || self.whip(thread_pool))
     }
 
@@ -195,10 +189,7 @@ impl<W, B> Meister<W, B> {
         }
     }
 
-    fn whip<P, J>(&self, thread_pool: &P) -> Result<(), Error>
-    where P: edeltraud::ThreadPool<J>,
-          J: edeltraud::Job + From<SklaveJob<W, B>>,
-    {
+    fn whip<J>(&self, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
         let sklave_job = SklaveJob::new(self.inner.clone());
         edeltraud::job(thread_pool, sklave_job)
             .map_err(Error::Edeltraud)
