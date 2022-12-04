@@ -17,10 +17,10 @@ use std::{
 
 pub mod ewig;
 pub mod komm;
-// pub mod utils;
+pub mod utils;
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
 
 pub struct Freie<W, B> {
     inner: Arc<Inner<W, B>>,

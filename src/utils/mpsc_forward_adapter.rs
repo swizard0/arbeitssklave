@@ -6,14 +6,15 @@ use std::{
 
 use crate::{
     ewig,
-    komm,
+    Meister,
     Gehorsam,
+    SklaveJob,
     SklavenBefehl,
 };
 
 #[derive(Debug)]
 pub enum Error {
-    Versklaven(komm::Error),
+    Versklaven(crate::Error),
     Ewig(ewig::Error),
     Disconnected,
 }
@@ -25,17 +26,17 @@ impl From<ewig::Error> for Error {
 }
 
 pub struct Adapter<B> {
-    pub sklave_meister: komm::Meister<Welt<B>, B>,
+    pub sklave_meister: Meister<Welt<B>, B>,
 }
 
 impl<B> Adapter<B> {
-    pub fn versklaven<P>(
+    pub fn versklaven<J>(
         sync_sender: mpsc::SyncSender<B>,
-        thread_pool: &P,
+        thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<Adapter<B>, Error>
-    where P: edeltraud::ThreadPool<Job<B>> + Clone + Sync + Send + 'static,
-          B: Send + Sync + 'static,
+    where J: From<SklaveJob<Welt<B>, B>>,
+          B: Send + 'static,
     {
         let ewig_freie = ewig::Freie::new();
         let ewig_meister =
@@ -46,7 +47,7 @@ impl<B> Adapter<B> {
             Welt { ewig_meister, },
         );
         let sklave_meister = sklave_freie
-            .versklaven_komm(thread_pool)
+            .versklaven(thread_pool)
             .map_err(Error::Versklaven)?;
         Ok(Adapter { sklave_meister, })
     }
@@ -67,18 +68,26 @@ fn forward<B>(sklave: &mut ewig::Sklave<B, Error>, sender: &mpsc::SyncSender<B>)
 }
 
 pub enum Job<B> {
-    Sklave(komm::SklaveJob<Welt<B>, B>),
+    Sklave(SklaveJob<Welt<B>, B>),
 }
 
-impl<B> From<komm::SklaveJob<Welt<B>, B>> for Job<B> {
-    fn from(job: komm::SklaveJob<Welt<B>, B>) -> Job<B> {
+impl<B> From<SklaveJob<Welt<B>, B>> for Job<B> {
+    fn from(job: SklaveJob<Welt<B>, B>) -> Job<B> {
         Job::Sklave(job)
     }
 }
 
-impl<B> edeltraud::Job for Job<B> where B: Send + 'static {
-    fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-        match self {
+pub struct JobUnit<B, J>(edeltraud::JobUnit<J, Job<B>>);
+
+impl<B, J> From<edeltraud::JobUnit<J, Job<B>>> for JobUnit<B, J> {
+    fn from(job_unit: edeltraud::JobUnit<J, Job<B>>) -> Self {
+        Self(job_unit)
+    }
+}
+
+impl<B, J> edeltraud::Job for JobUnit<B, J> {
+    fn run(self) {
+        match self.0.job {
             Job::Sklave(mut sklave_job) =>
                 loop {
                     match sklave_job.zu_ihren_diensten().unwrap() {

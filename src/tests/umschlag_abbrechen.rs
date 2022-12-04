@@ -21,8 +21,8 @@ fn basic() {
         }
     }
 
-    let edeltraud: edeltraud::Edeltraud<utils::mpsc_forward_adapter::Job<LocalOrder>> = edeltraud::Builder::new()
-        .build()
+    let edeltraud = edeltraud::Builder::new()
+        .build::<_, utils::mpsc_forward_adapter::JobUnit<_, _>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
 
@@ -30,10 +30,12 @@ fn basic() {
     let adapter =
         utils::mpsc_forward_adapter::Adapter::versklaven(sync_tx, &thread_pool).unwrap();
 
-    let rueckkopplung = adapter
-        .sklave_meister
-        .sendegeraet()
-        .rueckkopplung(LocalStamp);
+    let rueckkopplung =
+        komm::Rueckkopplung::new(
+            LocalStamp,
+            adapter.sklave_meister,
+            &thread_pool,
+        );
     drop(rueckkopplung);
 
     assert!(matches!(
