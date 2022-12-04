@@ -33,13 +33,14 @@ fn basic() {
     let rueckkopplung =
         komm::Rueckkopplung::new(
             LocalStamp,
-            adapter.sklave_meister,
+            #[allow(clippy::redundant_clone)]
+            adapter.sklave_meister.clone(),
             &thread_pool,
         );
     drop(rueckkopplung);
 
     assert!(matches!(
-        sync_rx.recv_timeout(std::time::Duration::from_millis(100)),
+        sync_rx.recv_timeout(std::time::Duration::from_millis(1000)),
         Ok(LocalOrder(komm::UmschlagAbbrechen { stamp: LocalStamp, })),
     ));
 }

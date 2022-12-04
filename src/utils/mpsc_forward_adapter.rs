@@ -31,7 +31,7 @@ pub struct Adapter<B> {
 
 impl<B> Adapter<B> {
     pub fn versklaven<J>(
-        sync_sender: mpsc::SyncSender<B>,
+        sync_tx: mpsc::SyncSender<B>,
         thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<Adapter<B>, Error>
@@ -40,9 +40,9 @@ impl<B> Adapter<B> {
     {
         let ewig_freie = ewig::Freie::new();
         let ewig_meister =
-            ewig_freie.versklaven(
-                move |sklave| forward(sklave, &sync_sender),
-            )?;
+            ewig_freie.versklaven(move |sklave| {
+                forward(sklave, &sync_tx)
+            })?;
         let sklave_freie = crate::Freie::new(
             Welt { ewig_meister, },
         );
@@ -57,10 +57,10 @@ pub struct Welt<B> {
     ewig_meister: ewig::Meister<B, Error>,
 }
 
-fn forward<B>(sklave: &mut ewig::Sklave<B, Error>, sender: &mpsc::SyncSender<B>) -> Result<(), Error> {
+fn forward<B>(sklave: &mut ewig::Sklave<B, Error>, sync_tx: &mpsc::SyncSender<B>) -> Result<(), Error> {
     loop {
         for befehl in sklave.zu_ihren_diensten()? {
-            if let Err(_send_error) = sender.send(befehl) {
+            if let Err(_send_error) = sync_tx.send(befehl) {
                 return Err(Error::Disconnected);
             }
         }
@@ -98,8 +98,7 @@ impl<B, J> edeltraud::Job for JobUnit<B, J> {
                                 match befehle.befehl() {
                                     SklavenBefehl::Mehr { befehl, mehr_befehle, } => {
                                         befehle = mehr_befehle;
-                                        let sklavenwelt = &*befehle;
-                                        if let Err(send_error) = sklavenwelt.ewig_meister.befehl(befehl) {
+                                        if let Err(send_error) = befehle.ewig_meister.befehl(befehl) {
                                             log::debug!("befehl forward failed: {send_error:?}");
                                             return;
                                         }
