@@ -141,6 +141,12 @@ impl TouchTag {
     }
 }
 
+impl<W, B> Default for Freie<W, B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<W, B> Freie<W, B> {
     pub fn new() -> Self {
         let inner = Freie::new_inner_with(None);

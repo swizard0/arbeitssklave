@@ -45,16 +45,24 @@ fn many_to_one() {
         consumer_meister: Meister<ConsumerWelt, ConsumerOrder>,
     }
 
-    impl edeltraud::Job for Job {
-        fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-            match self {
+    struct JobUnit<J>(edeltraud::JobUnit<J, Job>);
+
+    impl<J> From<edeltraud::JobUnit<J, Job>> for JobUnit<J> {
+        fn from(job_unit: edeltraud::JobUnit<J, Job>) -> Self {
+            Self(job_unit)
+        }
+    }
+
+    impl<J> edeltraud::Job for JobUnit<J> where J: From<SklaveJob<ConsumerWelt, ConsumerOrder>>, {
+        fn run(self) {
+            match self.0.job {
                 Job::Feeder(FeederJob { consumer_meister, }) => {
-                    fn job_loop<P>(
+                    fn job_loop<J>(
                         consumer_meister: &Meister<ConsumerWelt, ConsumerOrder>,
-                        thread_pool: &P,
+                        thread_pool: &edeltraud::Handle<J>,
                     )
                         -> Result<(), crate::Error>
-                    where P: edeltraud::ThreadPool<Job>
+                    where J: From<SklaveJob<ConsumerWelt, ConsumerOrder>>,
                     {
                         consumer_meister.befehl(ConsumerOrder::Register, thread_pool)?;
                         for _ in 0 .. INCS_COUNT {
@@ -64,7 +72,7 @@ fn many_to_one() {
                         Ok(())
                     }
 
-                    job_loop(&consumer_meister, thread_pool).unwrap();
+                    job_loop(&consumer_meister, &self.0.handle).unwrap();
                 },
                 Job::Consumer(mut sklave_job) =>
                     loop {
@@ -132,24 +140,27 @@ fn many_to_one() {
     }
 
     let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-        .build()
+        .build::<_, JobUnit<_>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
 
     let (done_tx, done_rx) = mpsc::channel();
-    let consumer_meister = Freie::new(
-        ConsumerWelt {
-            total_orders: 0,
-            feeders_regs: 0,
-            feeders_count: 0,
-            local_counter: 0,
-            done_tx,
-        })
-        .versklaven(&thread_pool)
+    let consumer_meister = Freie::new()
+        .versklaven(
+            ConsumerWelt {
+                total_orders: 0,
+                feeders_regs: 0,
+                feeders_count: 0,
+                local_counter: 0,
+                done_tx,
+            },
+            &thread_pool,
+        )
         .unwrap();
 
     for _ in 0 .. JOBS_COUNT {
-        edeltraud::ThreadPool::spawn(&thread_pool, Job::Feeder(FeederJob { consumer_meister: consumer_meister.clone(), })).unwrap();
+        edeltraud::job(&thread_pool, Job::Feeder(FeederJob { consumer_meister: consumer_meister.clone(), }))
+            .unwrap();
     }
 
     assert_eq!(done_rx.recv(), Ok(JOBS_COUNT * INCS_COUNT));

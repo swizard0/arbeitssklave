@@ -37,22 +37,43 @@ fn drop_bomb_with_umschlag_abbrechen() {
     }
 
     impl From<SklaveJob<BombWelt, BombOrderTerminate>> for Job {
-        fn from(job: SklaveJob<BombWelt, BombOrderTerminate>) -> Job {
-            Job::Bomb(job)
+        fn from(job: SklaveJob<BombWelt, BombOrderTerminate>) -> Self {
+            Self::Bomb(job)
         }
     }
 
     impl From<utils::mpsc_forward_adapter::Job<RecvOrderBoom>> for Job {
-        fn from(job: utils::mpsc_forward_adapter::Job<RecvOrderBoom>) -> Job {
-            Job::Recv(job)
+        fn from(job: utils::mpsc_forward_adapter::Job<RecvOrderBoom>) -> Self {
+            Self::Recv(job)
         }
     }
 
-    impl edeltraud::Job for Job {
-        fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-            match self {
-                Job::Recv(job) =>
-                    job.run(&edeltraud::ThreadPoolMap::new(thread_pool)),
+    impl From<SklaveJob<utils::mpsc_forward_adapter::Welt<RecvOrderBoom>, RecvOrderBoom>> for Job {
+        fn from(job: SklaveJob<utils::mpsc_forward_adapter::Welt<RecvOrderBoom>, RecvOrderBoom>) -> Self {
+            Self::Recv(job.into())
+        }
+    }
+
+    struct JobUnit<J>(edeltraud::JobUnit<J, Job>);
+
+    impl<J> From<edeltraud::JobUnit<J, Job>> for JobUnit<J> {
+        fn from(job_unit: edeltraud::JobUnit<J, Job>) -> Self {
+            Self(job_unit)
+        }
+    }
+
+    impl<J> edeltraud::Job for JobUnit<J> {
+        fn run(self) {
+            match self.0.job {
+                Job::Recv(job) => {
+                    let job_unit = utils::mpsc_forward_adapter::JobUnit::from(
+                        edeltraud::JobUnit {
+                            handle: self.0.handle,
+                            job,
+                        },
+                    );
+                    job_unit.run();
+                },
                 Job::Bomb(mut sklave_job) =>
                     loop {
                         match sklave_job.zu_ihren_diensten() {
@@ -87,7 +108,7 @@ fn drop_bomb_with_umschlag_abbrechen() {
     }
 
     let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-        .build()
+        .build::<_, JobUnit<_>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
 
@@ -95,19 +116,19 @@ fn drop_bomb_with_umschlag_abbrechen() {
     let adapter =
         utils::mpsc_forward_adapter::Adapter::versklaven(
             sync_tx,
-            &edeltraud::ThreadPoolMap::new(thread_pool.clone()),
+            &thread_pool,
         )
         .unwrap();
-    let rueckkopplung = adapter
-        .sklave_meister
-        .sendegeraet()
+    let sendegeraet = komm::Sendegeraet::starten(
+        #[allow(clippy::redundant_clone)]
+        adapter.sklave_meister.clone(),
+        thread_pool.clone(),
+    );
+    let rueckkopplung = sendegeraet
         .rueckkopplung(Stamp);
 
-    let bomb_meister =
-        Freie::new(
-            BombWelt { _drop_bomb: rueckkopplung, },
-        )
-        .versklaven(&thread_pool)
+    let bomb_meister = Freie::new()
+        .versklaven(BombWelt { _drop_bomb: rueckkopplung, }, &thread_pool)
         .unwrap();
 
     bomb_meister.befehl(BombOrderTerminate, &thread_pool).unwrap();

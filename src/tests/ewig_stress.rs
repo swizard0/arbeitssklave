@@ -34,8 +34,16 @@ fn stress_8() {
         consumer_meister: ewig::Meister<ConsumerOrder, ConsumerError>,
     }
 
-    impl edeltraud::Job for FeederJob {
-        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
+    struct JobUnit<J>(edeltraud::JobUnit<J, FeederJob>);
+
+    impl<J> From<edeltraud::JobUnit<J, FeederJob>> for JobUnit<J> {
+        fn from(job_unit: edeltraud::JobUnit<J, FeederJob>) -> Self {
+            Self(job_unit)
+        }
+    }
+
+    impl<J> edeltraud::Job for JobUnit<J> {
+        fn run(self) {
             fn job_loop(consumer_meister: &ewig::Meister<ConsumerOrder, ConsumerError>) -> Result<(), ConsumerError> {
                 consumer_meister.befehl(ConsumerOrder::Register)?;
                 for _ in 0 .. INCS_COUNT {
@@ -45,7 +53,7 @@ fn stress_8() {
                 Ok(())
             }
 
-            job_loop(&self.consumer_meister).unwrap();
+            job_loop(&self.0.job.consumer_meister).unwrap();
         }
     }
 
@@ -78,13 +86,13 @@ fn stress_8() {
         })
         .unwrap();
 
-    let edeltraud: edeltraud::Edeltraud<FeederJob> = edeltraud::Builder::new()
-        .build()
+    let edeltraud = edeltraud::Builder::new()
+        .build::<_, JobUnit<_>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
 
     for _ in 0 .. JOBS_COUNT {
-        edeltraud::ThreadPool::spawn(&thread_pool, FeederJob { consumer_meister: consumer_meister.clone(), }).unwrap();
+        edeltraud::job(&thread_pool, FeederJob { consumer_meister: consumer_meister.clone(), }).unwrap();
     }
 
     global_barrier.wait();
