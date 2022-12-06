@@ -54,6 +54,12 @@ struct Sklavenwelt<W, B> {
     taken_orders: VecDeque<B>,
 }
 
+impl<W, B> Sklavenwelt<W, B> {
+    fn new(sklavenwelt: W) -> Self {
+        Self { sklavenwelt, taken_orders: VecDeque::new(), }
+    }
+}
+
 struct Inner<W, B> {
     orders: crossbeam::queue::SegQueue<B>,
     touch_tag: TouchTag,
@@ -137,22 +143,24 @@ impl TouchTag {
 
 impl<W, B> Freie<W, B> {
     pub fn new(sklavenwelt: W) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                orders: crossbeam::queue::SegQueue::new(),
-                touch_tag: TouchTag::default(),
-                sklavenwelt: UnsafeCell::new(Some(Sklavenwelt {
-                    sklavenwelt,
-                    taken_orders: VecDeque::new(),
-                })),
-            }),
-        }
+        let inner = Freie::new_inner_with(
+            Some(Sklavenwelt::new(sklavenwelt)),
+        );
+        Self { inner, }
     }
 
     pub fn versklaven<J>(self, thread_pool: &edeltraud::Handle<J>) -> Result<Meister<W, B>, Error> where J: From<SklaveJob<W, B>> {
         let meister = Meister { inner: self.inner, };
         meister.whip(thread_pool)?;
         Ok(meister)
+    }
+
+    fn new_inner_with(sklavenwelt: Option<Sklavenwelt<W, B>>) -> Arc<Inner<W, B>> {
+        Arc::new(Inner {
+            orders: crossbeam::queue::SegQueue::new(),
+            touch_tag: TouchTag::default(),
+            sklavenwelt: UnsafeCell::new(sklavenwelt),
+        })
     }
 }
 

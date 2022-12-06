@@ -12,9 +12,42 @@ use std::{
 
 use crate::{
     Error,
+    Freie,
     Meister,
     SklaveJob,
 };
+
+// Freie
+
+impl<W, B> Freie<W, B> {
+    pub fn with_sendegeraet<F, J>(
+        sklavenwelt_erbauer: F,
+        thread_pool: edeltraud::Handle<J>,
+    )
+        -> Self
+    where F: FnOnce(Sendegeraet<B>) -> W,
+          J: From<SklaveJob<W, B>> + Send + 'static,
+          W: Send + 'static,
+          B: Send + 'static,
+    {
+        let mut inner = Freie::new_inner_with(None);
+        let sendegeraet = Sendegeraet::starten(
+            Meister { inner: inner.clone(), },
+            thread_pool,
+        );
+        let sklavenwelt = sklavenwelt_erbauer(sendegeraet);
+
+        use crate::{
+            reach_sklavenwelt_mut,
+            Sklavenwelt,
+        };
+
+        *reach_sklavenwelt_mut(&mut inner) =
+            Some(Sklavenwelt::new(sklavenwelt));
+
+        Self { inner, }
+    }
+}
 
 // Umschlag
 
@@ -31,41 +64,6 @@ pub struct UmschlagAbbrechen<S> {
     pub stamp: S,
 }
 
-// Rueckkopplung
-
-pub struct Rueckkopplung<W, B, S, J> where B: From<UmschlagAbbrechen<S>>, J: From<SklaveJob<W, B>> {
-    maybe_stamp: Option<S>,
-    meister: Meister<W, B>,
-    thread_pool: edeltraud::Handle<J>,
-}
-
-impl<W, B, S, J> Rueckkopplung<W, B, S, J> where B: From<UmschlagAbbrechen<S>>, J: From<SklaveJob<W, B>> {
-    pub fn new(stamp: S, meister: Meister<W, B>, thread_pool: &edeltraud::Handle<J>) -> Self {
-        Self {
-            maybe_stamp: Some(stamp),
-            meister,
-            thread_pool: thread_pool.clone(),
-        }
-    }
-
-    pub fn commit<I>(mut self, inhalt: I) -> Result<(), Error> where B: From<Umschlag<I, S>> {
-        let stamp = self.maybe_stamp.take().unwrap();
-        let umschlag = Umschlag { inhalt, stamp, };
-        let order = umschlag.into();
-        self.meister.befehl(order, &self.thread_pool)
-    }
-}
-
-impl<W, B, S, J> Drop for Rueckkopplung<W, B, S, J> where B: From<UmschlagAbbrechen<S>>, J: From<SklaveJob<W, B>>, {
-    fn drop(&mut self) {
-        if let Some(stamp) = self.maybe_stamp.take() {
-            let umschlag_abbrechen = UmschlagAbbrechen { stamp, };
-            let order = umschlag_abbrechen.into();
-            self.meister.befehl(order, &self.thread_pool).ok();
-        }
-    }
-}
-
 // Echo
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -75,14 +73,39 @@ pub trait Echo<I> {
     fn commit_echo(self, inhalt: I) -> Result<(), EchoError>;
 }
 
-impl<W, B, I, S, J> Echo<I> for Rueckkopplung<W, B, S, J>
+impl<B, I, S> Echo<I> for Rueckkopplung<B, S>
 where B: From<UmschlagAbbrechen<S>>,
       B: From<Umschlag<I, S>>,
-      J: From<SklaveJob<W, B>>,
 {
     fn commit_echo(self, inhalt: I) -> Result<(), EchoError> {
         self.commit(inhalt)
             .map_err(|_error| EchoError)
+    }
+}
+
+// Rueckkopplung
+
+pub struct Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> + 'static {
+    maybe_stamp: Option<S>,
+    sendegeraet: Sendegeraet<B>,
+}
+
+impl<B, S> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+    pub fn commit<I>(mut self, inhalt: I) -> Result<(), Error> where B: From<Umschlag<I, S>> {
+        let stamp = self.maybe_stamp.take().unwrap();
+        let umschlag = Umschlag { inhalt, stamp, };
+        let order = umschlag.into();
+        self.sendegeraet.meister.befehl(order)
+    }
+}
+
+impl<B, S> Drop for Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+    fn drop(&mut self) {
+        if let Some(stamp) = self.maybe_stamp.take() {
+            let umschlag_abbrechen = UmschlagAbbrechen { stamp, };
+            let order = umschlag_abbrechen.into();
+            self.sendegeraet.meister.befehl(order).ok();
+        }
     }
 }
 
@@ -172,52 +195,87 @@ pub struct StreamAbbrechen {
     pub stream_id: StreamId,
 }
 
-pub struct Stream<W, B, J> where B: From<StreamAbbrechen>, J: From<SklaveJob<W, B>> {
+pub struct Stream<B> where B: From<StreamAbbrechen> + 'static {
     stream_id: StreamId,
     cancellable: Arc<AtomicBool>,
-    meister: Meister<W, B>,
-    thread_pool: edeltraud::Handle<J>,
+    sendegeraet: Sendegeraet<B>,
 }
 
-impl<W, B, J> Stream<W, B, J> where B: From<StreamAbbrechen>, J: From<SklaveJob<W, B>> {
+impl<B> Stream<B> where B: From<StreamAbbrechen> {
     pub fn stream_id(&self) -> &StreamId {
         &self.stream_id
     }
 
     pub fn mehr<I>(&self, inhalt: I, stream_token: StreamToken) -> Result<(), Error> where B: From<StreamMehr<I>> {
-        self.meister.befehl(StreamMehr { inhalt, stream_token, }.into(), &self.thread_pool)
+        self.sendegeraet.meister.befehl(StreamMehr { inhalt, stream_token, }.into())
     }
 }
 
-impl<W, B, J> Drop for Stream<W, B, J> where B: From<StreamAbbrechen>, J: From<SklaveJob<W, B>>  {
+impl<B> Drop for Stream<B> where B: From<StreamAbbrechen> {
     fn drop(&mut self) {
         if self.cancellable.load(Ordering::SeqCst) {
-            self.meister
-                .befehl(
-                    StreamAbbrechen { stream_id: self.stream_id.clone(), }.into(),
-                    &self.thread_pool,
-                )
+            self.sendegeraet
+                .meister
+                .befehl(StreamAbbrechen { stream_id: self.stream_id.clone(), }.into())
                 .ok();
         }
     }
 }
 
-#[derive(Default)]
-pub struct StreamErbauer {
+// SendegeraetMeister
+
+trait SendegeraetMeister<B> where Self: Send + Sync + 'static {
+    fn befehl(&self, order: B) -> Result<(), Error>;
+}
+
+// SendegeraetInner
+
+struct SendegeraetInner<W, B, J> {
+    meister: Meister<W, B>,
+    thread_pool: edeltraud::Handle<J>,
+}
+
+impl<W, B, J> SendegeraetMeister<B> for SendegeraetInner<W, B, J>
+where J: From<SklaveJob<W, B>> + Send + 'static,
+      W: Send + 'static,
+      B: Send + 'static,
+{
+    fn befehl(&self, order: B) -> Result<(), Error> {
+        self.meister.befehl(order, &self.thread_pool)
+    }
+}
+
+// Sendegeraet
+
+pub struct Sendegeraet<B> {
+    meister: Arc<dyn SendegeraetMeister<B>>,
     stream_counter: Arc<AtomicUsize>,
 }
 
-impl StreamErbauer {
-    pub fn stream_starten<I, W, B, J>(
-        &self,
-        inhalt: I,
-        meister: Meister<W, B>,
-        thread_pool: edeltraud::Handle<J>,
-    )
-        -> Result<Stream<W, B, J>, Error>
+impl<B> Sendegeraet<B> where B: Send + 'static {
+    pub fn starten<W, J>(meister: Meister<W, B>, thread_pool: edeltraud::Handle<J>) -> Self
+    where J: From<SklaveJob<W, B>> + Send + 'static,
+          W: Send + 'static,
+    {
+        let stream_counter = Arc::new(AtomicUsize::new(0));
+        let inner =
+            SendegeraetInner { meister, thread_pool, };
+        Sendegeraet {
+            meister: Arc::new(inner),
+            stream_counter,
+        }
+    }
+
+    pub fn rueckkopplung<S>(&self, stamp: S) -> Rueckkopplung<B, S> where B: From<UmschlagAbbrechen<S>> {
+        Rueckkopplung {
+            sendegeraet: self.clone(),
+            maybe_stamp: Some(stamp),
+        }
+    }
+
+    pub fn stream_starten<I>(&self, inhalt: I) -> Result<Stream<B>, Error>
     where B: From<StreamStarten<I>>,
           B: From<StreamAbbrechen>,
-          J: From<SklaveJob<W, B>>,
     {
         let id = self.stream_counter.fetch_add(1, Ordering::Relaxed);
         let stream_id = StreamId { id, };
@@ -226,22 +284,27 @@ impl StreamErbauer {
             stream_id.clone(),
             cancellable.clone(),
         );
-        meister.befehl(
-            StreamStarten { inhalt, stream_token, }.into(),
-            &thread_pool,
-        )?;
+        let order = StreamStarten { inhalt, stream_token, }.into();
+        self.meister.befehl(order)?;
 
-        Ok(Stream { stream_id, cancellable, meister, thread_pool, })
+        Ok(Stream { sendegeraet: self.clone(), stream_id, cancellable, })
     }
 }
 
+impl<B> Clone for Sendegeraet<B> {
+    fn clone(&self) -> Self {
+        Self {
+            meister: self.meister.clone(),
+            stream_counter: self.stream_counter.clone(),
+        }
+    }
+}
 
 // misc
 
-impl<W, B, S, J> fmt::Debug for Rueckkopplung<W, B, S, J>
+impl<B, S> fmt::Debug for Rueckkopplung<B, S>
 where B: From<UmschlagAbbrechen<S>>,
       S: fmt::Debug,
-      J: From<SklaveJob<W, B>>,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Rueckkopplung")

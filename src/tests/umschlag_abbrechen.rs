@@ -30,13 +30,14 @@ fn basic() {
     let adapter =
         utils::mpsc_forward_adapter::Adapter::versklaven(sync_tx, &thread_pool).unwrap();
 
-    let rueckkopplung =
-        komm::Rueckkopplung::new(
-            LocalStamp,
+    let sendegeraet =
+        komm::Sendegeraet::starten(
             #[allow(clippy::redundant_clone)]
             adapter.sklave_meister.clone(),
-            &thread_pool,
+            #[allow(clippy::redundant_clone)]
+            thread_pool.clone(),
         );
+    let rueckkopplung = sendegeraet.rueckkopplung(LocalStamp);
     drop(rueckkopplung);
 
     assert!(matches!(

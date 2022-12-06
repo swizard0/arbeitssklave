@@ -10,6 +10,7 @@ use crate::{
     komm,
     Freie,
     Gehorsam,
+    SklaveJob,
     SklavenBefehl,
 };
 
@@ -38,35 +39,53 @@ fn basic() {
     struct Welt {
         tx: Mutex<mpsc::Sender<Vec<isize>>>,
         current: Vec<isize>,
-        stream_sendegeraet: komm::Sendegeraet<stream::Order<Stream>>,
-        maybe_stream: Option<komm::Stream<stream::Order<Stream>>>,
+        local_sendegeraet: komm::Sendegeraet<LocalOrder>,
+        stream_sendegeraet: komm::Sendegeraet<stream::Order<StreamInhalt>>,
+        maybe_stream: Option<komm::Stream<stream::Order<StreamInhalt>>>,
     }
 
-    type Stream = komm::Rueckkopplung<LocalOrder, LocalStamp>;
+    type StreamInhalt = komm::Rueckkopplung<LocalOrder, LocalStamp>;
 
     enum LocalJob {
-        Sklave(komm::SklaveJob<Welt, LocalOrder>),
-        Stream(stream::Job<Stream>),
+        Sklave(SklaveJob<Welt, LocalOrder>),
+        Stream(stream::Job<StreamInhalt>),
     }
 
-    impl From<komm::SklaveJob<Welt, LocalOrder>> for LocalJob {
-        fn from(job: komm::SklaveJob<Welt, LocalOrder>) -> LocalJob {
-            LocalJob::Sklave(job)
+    impl From<SklaveJob<Welt, LocalOrder>> for LocalJob {
+        fn from(job: SklaveJob<Welt, LocalOrder>) -> Self {
+            Self::Sklave(job)
         }
     }
 
-    impl From<stream::Job<Stream>> for LocalJob {
-        fn from(job: stream::Job<Stream>) -> LocalJob {
-            LocalJob::Stream(job)
+    impl From<stream::Job<StreamInhalt>> for LocalJob {
+        fn from(job: stream::Job<StreamInhalt>) -> Self {
+            Self::Stream(job)
         }
     }
 
-    impl edeltraud::Job for LocalJob {
-        fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-            match self {
-                LocalJob::Stream(job) =>
-                    job.run(&edeltraud::ThreadPoolMap::new(thread_pool)),
-                LocalJob::Sklave(mut sklave_job) => {
+    impl From<SklaveJob<stream::Welt, stream::Order<StreamInhalt>>> for LocalJob {
+        fn from(job: SklaveJob<stream::Welt, stream::Order<StreamInhalt>>) -> Self {
+            Self::Stream(job.into())
+        }
+    }
+
+    struct LocalJobUnit<J>(edeltraud::JobUnit<J, LocalJob>);
+
+    impl<J> From<edeltraud::JobUnit<J, LocalJob>> for LocalJobUnit<J> {
+        fn from(job_unit: edeltraud::JobUnit<J, LocalJob>) -> Self {
+            Self(job_unit)
+        }
+    }
+
+    impl<J> edeltraud::Job for LocalJobUnit<J> {
+        fn run(self) {
+            match self.0.job {
+                LocalJob::Stream(job) => {
+                    let job_unit =
+                        stream::JobUnit::from(edeltraud::JobUnit { handle: self.0.handle, job, });
+                    job_unit.run()
+                },
+                LocalJob::Sklave(mut sklave_job) =>
                     loop {
                         match sklave_job.zu_ihren_diensten().unwrap() {
                             Gehorsam::Rasten =>
@@ -79,15 +98,18 @@ fn basic() {
                                             mehr_befehle,
                                         } => {
                                             befehle = mehr_befehle;
+                                            let inhalt = befehle
+                                                .local_sendegeraet
+                                                .rueckkopplung(LocalStamp);
                                             let stream = befehle
                                                 .stream_sendegeraet
-                                                .stream_starten(stream::OrderStreamStart {
-                                                    start,
-                                                    end,
-                                                    stream_echo: befehle
-                                                        .sendegeraet()
-                                                        .rueckkopplung(LocalStamp),
-                                                })
+                                                .stream_starten(
+                                                    stream::OrderStreamStart {
+                                                        start,
+                                                        end,
+                                                        stream_echo: inhalt,
+                                                    },
+                                                )
                                                 .unwrap();
                                             assert!(befehle.maybe_stream.is_none());
                                             befehle.maybe_stream = Some(stream);
@@ -100,11 +122,10 @@ fn basic() {
                                             mehr_befehle,
                                         } => {
                                             befehle = mehr_befehle;
-                                            let sklavenwelt = &mut *befehle;
-                                            let current = mem::take(&mut sklavenwelt.current);
-                                            assert!(sklavenwelt.maybe_stream.is_some());
-                                            sklavenwelt.maybe_stream = None;
-                                            let tx_lock = sklavenwelt.tx.lock().unwrap();
+                                            let current = mem::take(&mut befehle.current);
+                                            assert!(befehle.maybe_stream.is_some());
+                                            befehle.maybe_stream = None;
+                                            let tx_lock = befehle.tx.lock().unwrap();
                                             tx_lock.send(current).ok();
                                         },
                                         SklavenBefehl::Mehr {
@@ -119,12 +140,13 @@ fn basic() {
                                             let stream =
                                                 befehle.maybe_stream.as_ref().unwrap();
                                             assert_eq!(stream.stream_id(), mehr.stream_id());
+                                            let inhalt = befehle
+                                                .local_sendegeraet
+                                                .rueckkopplung(LocalStamp);
                                             stream
                                                 .mehr(
                                                     stream::OrderStreamNext {
-                                                        stream_echo: befehle
-                                                            .sendegeraet()
-                                                            .rueckkopplung(LocalStamp),
+                                                        stream_echo: inhalt,
                                                     },
                                                     mehr.into(),
                                                 )
@@ -137,11 +159,10 @@ fn basic() {
                                             mehr_befehle,
                                         } => {
                                             befehle = mehr_befehle;
-                                            let sklavenwelt = &mut *befehle;
-                                            let current = mem::take(&mut sklavenwelt.current);
-                                            assert!(sklavenwelt.maybe_stream.is_some());
-                                            sklavenwelt.maybe_stream = None;
-                                            let tx_lock = sklavenwelt.tx.lock().unwrap();
+                                            let current = mem::take(&mut befehle.current);
+                                            assert!(befehle.maybe_stream.is_some());
+                                            befehle.maybe_stream = None;
+                                            let tx_lock = befehle.tx.lock().unwrap();
                                             tx_lock.send(current).ok();
                                         },
                                         SklavenBefehl::Ende {
@@ -153,34 +174,35 @@ fn basic() {
                                     }
                                 },
                         }
-                    }
-                },
+                    },
             }
         }
     }
 
-    let edeltraud: edeltraud::Edeltraud<LocalJob> = edeltraud::Builder::new()
-        .build()
+    let edeltraud = edeltraud::Builder::new()
+        .build::<LocalJob, LocalJobUnit<LocalJob>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
 
     let (tx, rx) = mpsc::channel();
 
     let stream_meister =
-        stream::start(&edeltraud::ThreadPoolMap::new(thread_pool.clone()));
+        stream::start(&thread_pool);
+    let stream_sendegeraet =
+        komm::Sendegeraet::starten(stream_meister, thread_pool.clone());
 
-    let freie = Freie::new(
-        Welt {
+    let freie = Freie::with_sendegeraet(
+        |local_sendegeraet| Welt {
             tx: Mutex::new(tx),
             current: Vec::new(),
-            stream_sendegeraet: stream_meister.sendegeraet().clone(),
+            local_sendegeraet,
+            stream_sendegeraet,
             maybe_stream: None,
         },
+        thread_pool.clone(),
     );
 
-    let meister = freie
-        .versklaven_komm(&thread_pool)
-        .unwrap();
+    let meister = freie.versklaven(&thread_pool).unwrap();
 
     meister.befehl(LocalOrder::Start { start: 3, end: 6, }, &thread_pool).unwrap();
     assert_eq!(rx.recv(), Ok(vec![3, 4, 5]));
@@ -190,8 +212,6 @@ fn basic() {
     assert_eq!(rx.recv(), Ok(vec![9]));
     meister.befehl(LocalOrder::Start { start: -3, end: 7, }, &thread_pool).unwrap();
     assert_eq!(rx.recv(), Ok(vec![-3, -2, -1, 0, 1, 2, 3, 4, 5, 6]));
-
-    drop(stream_meister)
 }
 
 #[allow(clippy::module_inception)]
@@ -199,7 +219,9 @@ mod stream {
     use crate::{
         komm,
         Freie,
+        Meister,
         Gehorsam,
+        SklaveJob,
         SklavenBefehl,
     };
 
@@ -249,18 +271,26 @@ mod stream {
     }
 
     pub enum Job<S> {
-        Sklave(komm::SklaveJob<Welt, Order<S>>),
+        Sklave(SklaveJob<Welt, Order<S>>),
     }
 
-    impl<S> From<komm::SklaveJob<Welt, Order<S>>> for Job<S> {
-        fn from(sklave_job: komm::SklaveJob<Welt, Order<S>>) -> Job<S> {
+    impl<S> From<SklaveJob<Welt, Order<S>>> for Job<S> {
+        fn from(sklave_job: SklaveJob<Welt, Order<S>>) -> Job<S> {
             Job::Sklave(sklave_job)
         }
     }
 
-    impl<S> edeltraud::Job for Job<S> where S: komm::Echo<komm::Streamzeug<isize>> + Send + 'static {
-        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-            match self {
+    pub struct JobUnit<S, J>(edeltraud::JobUnit<J, Job<S>>);
+
+    impl<S, J> From<edeltraud::JobUnit<J, Job<S>>> for JobUnit<S, J> {
+        fn from(job_unit: edeltraud::JobUnit<J, Job<S>>) -> Self {
+            Self(job_unit)
+        }
+    }
+
+    impl<S, J> edeltraud::Job for JobUnit<S, J> where S: komm::Echo<komm::Streamzeug<isize>>, {
+        fn run(self) {
+            match self.0.job {
                 Job::Sklave(mut sklave_job) => {
                     loop {
                         match sklave_job.zu_ihren_diensten().unwrap() {
@@ -344,11 +374,11 @@ mod stream {
         }
     }
 
-    pub fn start<P, S>(thread_pool: &P) -> komm::Meister<Welt, Order<S>>
-    where P: edeltraud::ThreadPool<Job<S>> + Clone + Send + Sync + 'static,
-          S: komm::Echo<komm::Streamzeug<isize>> + Send + Sync + 'static,
+    pub fn start<S, J>(thread_pool: &edeltraud::Handle<J>) -> Meister<Welt, Order<S>>
+    where S: komm::Echo<komm::Streamzeug<isize>>,
+          J: From<SklaveJob<Welt, Order<S>>>,
     {
         let freie = Freie::new(Welt::default());
-        freie.versklaven_komm(thread_pool).unwrap()
+        freie.versklaven(thread_pool).unwrap()
     }
 }
