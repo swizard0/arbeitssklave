@@ -10,25 +10,35 @@ use crate::{
     Freie,
     Meister,
     Gehorsam,
+    SklaveJob,
     SklavenBefehl,
 };
 
 #[test]
 fn basic() {
-    let edeltraud: edeltraud::Edeltraud<Job> = edeltraud::Builder::new()
-        .build()
+    let edeltraud = edeltraud::Builder::new()
+        .build::<_, JobUnit<_>>()
         .unwrap();
     let thread_pool = edeltraud.handle();
 
-    let odd_meister = odd::start(&edeltraud::ThreadPoolMap::new(&thread_pool));
-    let even_meister = even::start(&edeltraud::ThreadPoolMap::new(&thread_pool));
+    let odd_meister = odd::start(&thread_pool);
+    let even_meister = even::start(&thread_pool);
 
-    let driver_freie = Freie::new(Welt {
-        odd_meister,
-        even_meister,
-    });
+    let driver_freie = Freie::new();
+    let driver_sendegeraet = komm::Sendegeraet::starten(
+        driver_freie.meister(),
+        thread_pool.clone(),
+    );
+
     let driver_meister =
-        driver_freie.versklaven_komm(&thread_pool)
+        driver_freie.versklaven(
+            Welt {
+                sendegeraet: driver_sendegeraet,
+                odd_meister,
+                even_meister,
+            },
+            &thread_pool,
+        )
         .unwrap();
 
     let mut outcomes = Vec::new();
@@ -93,6 +103,7 @@ type EvenJob = even::Job<komm::Rueckkopplung<Order, Stamp>>;
 type EvenOrder = even::Order<komm::Rueckkopplung<Order, Stamp>>;
 
 struct Welt {
+    sendegeraet: komm::Sendegeraet<Order>,
     odd_meister: Meister<odd::Welt, OddOrder>,
     even_meister: Meister<even::Welt, EvenOrder>,
 }
@@ -100,11 +111,11 @@ struct Welt {
 enum Job {
     Odd(OddJob),
     Even(EvenJob),
-    Driver(komm::SklaveJob<Welt, Order>),
+    Driver(SklaveJob<Welt, Order>),
 }
 
-impl From<komm::SklaveJob<Welt, Order>> for Job {
-    fn from(job: komm::SklaveJob<Welt, Order>) -> Job {
+impl From<SklaveJob<Welt, Order>> for Job {
+    fn from(job: SklaveJob<Welt, Order>) -> Job {
         Job::Driver(job)
     }
 }
@@ -115,9 +126,21 @@ impl From<OddJob> for Job {
     }
 }
 
+impl From<SklaveJob<odd::Welt, OddOrder>> for Job {
+    fn from(job: SklaveJob<odd::Welt, OddOrder>) -> Job {
+        Job::Odd(job.into())
+    }
+}
+
 impl From<EvenJob> for Job {
     fn from(job: EvenJob) -> Job {
         Job::Even(job)
+    }
+}
+
+impl From<SklaveJob<even::Welt, EvenOrder>> for Job {
+    fn from(job: SklaveJob<even::Welt, EvenOrder>) -> Job {
+        Job::Even(job.into())
     }
 }
 
@@ -127,14 +150,33 @@ struct Stamp {
     reply_tx: Mutex<mpsc::Sender<ValueType>>,
 }
 
-impl edeltraud::Job for Job {
-    fn run<P>(self, thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-        match self {
+struct JobUnit<J>(edeltraud::JobUnit<J, Job>);
+
+impl<J> From<edeltraud::JobUnit<J, Job>> for JobUnit<J> {
+    fn from(job_unit: edeltraud::JobUnit<J, Job>) -> Self {
+        Self(job_unit)
+    }
+}
+
+impl<J> edeltraud::Job for JobUnit<J>
+where J: From<SklaveJob<odd::Welt, OddOrder>>,
+      J: From<SklaveJob<even::Welt, EvenOrder>>,
+{
+    fn run(self) {
+        match self.0.job {
             Job::Odd(job) => {
-                job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
+                let job_unit = odd::JobUnit(edeltraud::JobUnit {
+                    handle: self.0.handle,
+                    job,
+                });
+                job_unit.run();
             },
             Job::Even(job) => {
-                job.run(&edeltraud::ThreadPoolMap::new(thread_pool));
+                let job_unit = even::JobUnit(edeltraud::JobUnit {
+                    handle: self.0.handle,
+                    job,
+                });
+                job_unit.run();
             },
             Job::Driver(mut sklave_job) =>
                 loop {
@@ -154,14 +196,14 @@ impl edeltraud::Job for Job {
                                                 even::Order::Is {
                                                     value,
                                                     echo: mehr_befehle
-                                                        .sendegeraet()
+                                                        .sendegeraet
                                                         .rueckkopplung(Stamp {
                                                             current_value: value,
                                                             current_guess: ValueType::Even,
                                                             reply_tx,
                                                         }),
                                                 },
-                                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_>>::new(thread_pool),
+                                                &self.0.handle,
                                             )
                                             .unwrap();
                                         befehle = mehr_befehle;
@@ -190,14 +232,14 @@ impl edeltraud::Job for Job {
                                                 even::Order::Is {
                                                     value: current_value - 1,
                                                     echo: mehr_befehle
-                                                        .sendegeraet()
+                                                        .sendegeraet
                                                         .rueckkopplung(Stamp {
                                                             current_value: current_value - 1,
                                                             current_guess: current_guess.neg(),
                                                             reply_tx,
                                                         }),
                                                 },
-                                                &edeltraud::ThreadPoolMap::<_, _, even::Job<_>>::new(thread_pool),
+                                                &self.0.handle,
                                             )
                                             .unwrap();
                                         befehle = mehr_befehle;
@@ -230,14 +272,14 @@ impl edeltraud::Job for Job {
                                                 odd::Order::Is {
                                                     value: current_value - 1,
                                                     echo: mehr_befehle
-                                                        .sendegeraet()
+                                                        .sendegeraet
                                                         .rueckkopplung(Stamp {
                                                             current_value: current_value - 1,
                                                             current_guess: current_guess.neg(),
                                                             reply_tx,
                                                         }),
                                                 },
-                                                &edeltraud::ThreadPoolMap::<_, _, odd::Job<_>>::new(thread_pool),
+                                                &self.0.handle,
                                             )
                                             .unwrap();
                                         befehle = mehr_befehle;
@@ -278,14 +320,14 @@ mod odd {
 
     pub struct Welt;
 
-    pub enum Order<E> where E: komm::Echo<Outcome> {
+    pub enum Order<E> {
         Is {
             value: usize,
             echo: E,
         },
     }
 
-    pub enum Job<E> where E: komm::Echo<Outcome> {
+    pub enum Job<E> {
         Sklave(SklaveJob<Welt, Order<E>>),
     }
 
@@ -295,9 +337,17 @@ mod odd {
         }
     }
 
-    impl<E> edeltraud::Job for Job<E> where E: komm::Echo<Outcome> + Send + 'static {
-        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-            match self {
+    pub struct JobUnit<E, J>(pub edeltraud::JobUnit<J, Job<E>>);
+
+    impl<E, J> From<edeltraud::JobUnit<J, Job<E>>> for JobUnit<E, J> {
+        fn from(job_unit: edeltraud::JobUnit<J, Job<E>>) -> Self {
+            Self(job_unit)
+        }
+    }
+
+    impl<E, J> edeltraud::Job for JobUnit<E, J> where E: komm::Echo<Outcome> + Send + 'static {
+        fn run(self) {
+            match self.0.job {
                 Job::Sklave(mut sklave_job) => {
                     loop {
                         match sklave_job.zu_ihren_diensten().unwrap() {
@@ -333,12 +383,12 @@ mod odd {
         }
     }
 
-    pub fn start<P, E>(thread_pool: &P) -> Meister<Welt, Order<E>>
-    where P: edeltraud::ThreadPool<Job<E>>,
-          E: komm::Echo<Outcome> + Send + 'static,
+    pub fn start<E, J>(thread_pool: &edeltraud::Handle<J>) -> Meister<Welt, Order<E>>
+    where E: komm::Echo<Outcome> + Send + 'static,
+          J: From<SklaveJob<Welt, Order<E>>>,
     {
-        let freie = Freie::new(Welt);
-        freie.versklaven(thread_pool).unwrap()
+        let freie = Freie::new();
+        freie.versklaven(Welt, thread_pool).unwrap()
     }
 }
 
@@ -359,14 +409,14 @@ mod even {
 
     pub struct Welt;
 
-    pub enum Order<E> where E: komm::Echo<Outcome> {
+    pub enum Order<E> {
         Is {
             value: usize,
             echo: E,
         },
     }
 
-    pub enum Job<E> where E: komm::Echo<Outcome> {
+    pub enum Job<E> {
         Sklave(SklaveJob<Welt, Order<E>>),
     }
 
@@ -376,9 +426,17 @@ mod even {
         }
     }
 
-    impl<E> edeltraud::Job for Job<E> where E: komm::Echo<Outcome> + Send + 'static {
-        fn run<P>(self, _thread_pool: &P) where P: edeltraud::ThreadPool<Self> {
-            match self {
+    pub struct JobUnit<E, J>(pub edeltraud::JobUnit<J, Job<E>>);
+
+    impl<E, J> From<edeltraud::JobUnit<J, Job<E>>> for JobUnit<E, J> {
+        fn from(job_unit: edeltraud::JobUnit<J, Job<E>>) -> Self {
+            Self(job_unit)
+        }
+    }
+
+    impl<E, J> edeltraud::Job for JobUnit<E, J> where E: komm::Echo<Outcome> + Send + 'static {
+        fn run(self) {
+            match self.0.job {
                 Job::Sklave(mut sklave_job) => {
                     loop {
                         match sklave_job.zu_ihren_diensten().unwrap() {
@@ -414,11 +472,11 @@ mod even {
         }
     }
 
-    pub fn start<P, E>(thread_pool: &P) -> Meister<Welt, Order<E>>
-    where P: edeltraud::ThreadPool<Job<E>>,
-          E: komm::Echo<Outcome> + Send + 'static,
+    pub fn start<E, J>(thread_pool: &edeltraud::Handle<J>) -> Meister<Welt, Order<E>>
+    where E: komm::Echo<Outcome> + Send + 'static,
+          J: From<SklaveJob<Welt, Order<E>>>,
     {
-        let freie = Freie::new(Welt);
-        freie.versklaven(thread_pool).unwrap()
+        let freie = Freie::new();
+        freie.versklaven(Welt, thread_pool).unwrap()
     }
 }
