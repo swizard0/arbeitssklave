@@ -191,18 +191,24 @@ fn basic() {
     let stream_sendegeraet =
         komm::Sendegeraet::starten(stream_meister, thread_pool.clone());
 
-    let freie = Freie::with_sendegeraet(
-        |local_sendegeraet| Welt {
-            tx: Mutex::new(tx),
-            current: Vec::new(),
-            local_sendegeraet,
-            stream_sendegeraet,
-            maybe_stream: None,
-        },
+    let freie = Freie::new();
+    let local_sendegeraet = komm::Sendegeraet::starten(
+        freie.meister(),
         thread_pool.clone(),
     );
 
-    let meister = freie.versklaven(&thread_pool).unwrap();
+    let meister = freie
+        .versklaven(
+            Welt {
+                tx: Mutex::new(tx),
+                current: Vec::new(),
+                local_sendegeraet,
+                stream_sendegeraet,
+                maybe_stream: None,
+            },
+            &thread_pool,
+        )
+        .unwrap();
 
     meister.befehl(LocalOrder::Start { start: 3, end: 6, }, &thread_pool).unwrap();
     assert_eq!(rx.recv(), Ok(vec![3, 4, 5]));
@@ -378,7 +384,7 @@ mod stream {
     where S: komm::Echo<komm::Streamzeug<isize>>,
           J: From<SklaveJob<Welt, Order<S>>>,
     {
-        let freie = Freie::new(Welt::default());
-        freie.versklaven(thread_pool).unwrap()
+        let freie = Freie::new();
+        freie.versklaven(Welt::default(), thread_pool).unwrap()
     }
 }

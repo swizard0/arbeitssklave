@@ -142,14 +142,26 @@ impl TouchTag {
 }
 
 impl<W, B> Freie<W, B> {
-    pub fn new(sklavenwelt: W) -> Self {
-        let inner = Freie::new_inner_with(
-            Some(Sklavenwelt::new(sklavenwelt)),
-        );
+    pub fn new() -> Self {
+        let inner = Freie::new_inner_with(None);
         Self { inner, }
     }
 
-    pub fn versklaven<J>(self, thread_pool: &edeltraud::Handle<J>) -> Result<Meister<W, B>, Error> where J: From<SklaveJob<W, B>> {
+    pub fn meister(&self) -> Meister<W, B> {
+        Meister { inner: self.inner.clone(), }
+    }
+
+    pub fn versklaven<J>(
+        mut self,
+        sklavenwelt: W,
+        thread_pool: &edeltraud::Handle<J>,
+    )
+        -> Result<Meister<W, B>, Error>
+    where J: From<SklaveJob<W, B>>,
+    {
+        *reach_sklavenwelt_mut(&mut self.inner) =
+            Some(Sklavenwelt::new(sklavenwelt));
+
         let meister = Meister { inner: self.inner, };
         meister.whip(thread_pool)?;
         Ok(meister)
@@ -166,12 +178,6 @@ impl<W, B> Freie<W, B> {
 
 impl<W, B> Meister<W, B> {
     pub fn befehl<J>(&self, order: B, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
-        self.befehl_common(order, || self.whip(thread_pool))
-    }
-
-    fn befehl_common<F>(&self, order: B, whip: F) -> Result<(), Error>
-    where F: FnOnce() -> Result<(), Error>,
-    {
         let mut prev_tag = self.inner.touch_tag.load();
         loop {
             let decoded = TouchTag::decompose(prev_tag);
@@ -189,7 +195,7 @@ impl<W, B> Meister<W, B> {
                 continue;
             }
             if decoded.is_ready {
-                whip()?;
+                self.whip(thread_pool)?;
             }
 
             self.inner.orders.push(order);
@@ -357,25 +363,5 @@ impl<W, B> Drop for SklaveJob<W, B> {
             let _sklavenwelt =
                 reach_sklavenwelt_mut(&mut self.inner).take();
         }
-    }
-}
-
-impl<W, B> Deref for Freie<W, B> {
-    type Target = W;
-
-    fn deref(&self) -> &Self::Target {
-        reach_sklavenwelt(&self.inner)
-            .as_ref()
-            .map(|s| &s.sklavenwelt)
-            .unwrap()
-    }
-}
-
-impl<W, B> DerefMut for Freie<W, B> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        reach_sklavenwelt_mut(&mut self.inner)
-            .as_mut()
-            .map(|s| &mut s.sklavenwelt)
-            .unwrap()
     }
 }

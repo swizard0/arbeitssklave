@@ -43,11 +43,9 @@ impl<B> Adapter<B> {
             ewig_freie.versklaven(move |sklave| {
                 forward(sklave, &sync_tx)
             })?;
-        let sklave_freie = crate::Freie::new(
-            Welt { ewig_meister, },
-        );
+        let sklave_freie = crate::Freie::new();
         let sklave_meister = sklave_freie
-            .versklaven(thread_pool)
+            .versklaven(Welt { ewig_meister, }, thread_pool)
             .map_err(Error::Versklaven)?;
         Ok(Adapter { sklave_meister, })
     }

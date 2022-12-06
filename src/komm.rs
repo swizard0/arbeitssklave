@@ -12,42 +12,9 @@ use std::{
 
 use crate::{
     Error,
-    Freie,
     Meister,
     SklaveJob,
 };
-
-// Freie
-
-impl<W, B> Freie<W, B> {
-    pub fn with_sendegeraet<F, J>(
-        sklavenwelt_erbauer: F,
-        thread_pool: edeltraud::Handle<J>,
-    )
-        -> Self
-    where F: FnOnce(Sendegeraet<B>) -> W,
-          J: From<SklaveJob<W, B>> + Send + 'static,
-          W: Send + 'static,
-          B: Send + 'static,
-    {
-        let mut inner = Freie::new_inner_with(None);
-        let sendegeraet = Sendegeraet::starten(
-            Meister { inner: inner.clone(), },
-            thread_pool,
-        );
-        let sklavenwelt = sklavenwelt_erbauer(sendegeraet);
-
-        use crate::{
-            reach_sklavenwelt_mut,
-            Sklavenwelt,
-        };
-
-        *reach_sklavenwelt_mut(&mut inner) =
-            Some(Sklavenwelt::new(sklavenwelt));
-
-        Self { inner, }
-    }
-}
 
 // Umschlag
 
