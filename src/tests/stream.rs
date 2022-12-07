@@ -39,6 +39,7 @@ fn basic() {
     struct Welt {
         tx: Mutex<mpsc::Sender<Vec<isize>>>,
         current: Vec<isize>,
+        stream_erbauer: komm::StreamErbauer,
         local_sendegeraet: komm::Sendegeraet<LocalOrder>,
         stream_sendegeraet: komm::Sendegeraet<stream::Order<StreamInhalt>>,
         maybe_stream: Option<komm::Stream<stream::Order<StreamInhalt>>>,
@@ -104,6 +105,7 @@ fn basic() {
                                             let stream = befehle
                                                 .stream_sendegeraet
                                                 .stream_starten(
+                                                    &befehle.stream_erbauer,
                                                     stream::OrderStreamStart {
                                                         start,
                                                         end,
@@ -202,6 +204,7 @@ fn basic() {
             Welt {
                 tx: Mutex::new(tx),
                 current: Vec::new(),
+                stream_erbauer: komm::StreamErbauer::default(),
                 local_sendegeraet,
                 stream_sendegeraet,
                 maybe_stream: None,

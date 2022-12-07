@@ -189,6 +189,13 @@ impl<B> Drop for Stream<B> where B: From<StreamAbbrechen> {
     }
 }
 
+// StreamErbauer
+
+#[derive(Clone, Default)]
+pub struct StreamErbauer {
+    stream_counter: Arc<AtomicUsize>,
+}
+
 // SendegeraetMeister
 
 trait SendegeraetMeister<B> where Self: Send + Sync + 'static {
@@ -216,20 +223,21 @@ where J: From<SklaveJob<W, B>> + Send + 'static,
 
 pub struct Sendegeraet<B> {
     meister: Arc<dyn SendegeraetMeister<B>>,
-    stream_counter: Arc<AtomicUsize>,
 }
 
 impl<B> Sendegeraet<B> where B: Send + 'static {
-    pub fn starten<W, J>(meister: Meister<W, B>, thread_pool: edeltraud::Handle<J>) -> Self
+    pub fn starten<W, J>(
+        meister: Meister<W, B>,
+        thread_pool: edeltraud::Handle<J>,
+    )
+        -> Self
     where J: From<SklaveJob<W, B>> + Send + 'static,
           W: Send + 'static,
     {
-        let stream_counter = Arc::new(AtomicUsize::new(0));
         let inner =
             SendegeraetInner { meister, thread_pool, };
         Sendegeraet {
             meister: Arc::new(inner),
-            stream_counter,
         }
     }
 
@@ -240,11 +248,13 @@ impl<B> Sendegeraet<B> where B: Send + 'static {
         }
     }
 
-    pub fn stream_starten<I>(&self, inhalt: I) -> Result<Stream<B>, Error>
+    pub fn stream_starten<I>(&self, stream_erbauer: &StreamErbauer, inhalt: I) -> Result<Stream<B>, Error>
     where B: From<StreamStarten<I>>,
           B: From<StreamAbbrechen>,
     {
-        let id = self.stream_counter.fetch_add(1, Ordering::Relaxed);
+        let id = stream_erbauer
+            .stream_counter
+            .fetch_add(1, Ordering::Relaxed);
         let stream_id = StreamId { id, };
         let cancellable = Arc::new(AtomicBool::new(true));
         let stream_token = StreamToken::new(
@@ -262,7 +272,6 @@ impl<B> Clone for Sendegeraet<B> {
     fn clone(&self) -> Self {
         Self {
             meister: self.meister.clone(),
-            stream_counter: self.stream_counter.clone(),
         }
     }
 }
