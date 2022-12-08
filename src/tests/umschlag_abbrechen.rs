@@ -32,8 +32,7 @@ fn basic() {
 
     let sendegeraet =
         komm::Sendegeraet::starten(
-            #[allow(clippy::redundant_clone)]
-            adapter.sklave_meister.clone(),
+            &adapter.sklave_meister,
             #[allow(clippy::redundant_clone)]
             thread_pool.clone(),
         );

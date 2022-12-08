@@ -2,6 +2,7 @@ use std::{
     fmt,
     sync::{
         Arc,
+        Weak,
         atomic::{
             Ordering,
             AtomicBool,
@@ -14,6 +15,7 @@ use crate::{
     Error,
     Meister,
     SklaveJob,
+    Inner as ArbeitssklaveInner,
 };
 
 // Umschlag
@@ -205,7 +207,7 @@ trait SendegeraetMeister<B> where Self: Send + Sync + 'static {
 // SendegeraetInner
 
 struct SendegeraetInner<W, B, J> {
-    meister: Meister<W, B>,
+    schwach_meister: SchwachMeister<W, B>,
     thread_pool: edeltraud::Handle<J>,
 }
 
@@ -215,7 +217,7 @@ where J: From<SklaveJob<W, B>> + Send + 'static,
       B: Send + 'static,
 {
     fn befehl(&self, order: B) -> Result<(), Error> {
-        self.meister.befehl(order, &self.thread_pool)
+        self.schwach_meister.befehl(order, &self.thread_pool)
     }
 }
 
@@ -227,7 +229,7 @@ pub struct Sendegeraet<B> {
 
 impl<B> Sendegeraet<B> where B: Send + 'static {
     pub fn starten<W, J>(
-        meister: Meister<W, B>,
+        meister: &Meister<W, B>,
         thread_pool: edeltraud::Handle<J>,
     )
         -> Self
@@ -235,7 +237,12 @@ impl<B> Sendegeraet<B> where B: Send + 'static {
           W: Send + 'static,
     {
         let inner =
-            SendegeraetInner { meister, thread_pool, };
+            SendegeraetInner {
+                schwach_meister: SchwachMeister {
+                    maybe_inner: Arc::downgrade(&meister.inner),
+                },
+                thread_pool,
+            };
         Sendegeraet {
             meister: Arc::new(inner),
         }
@@ -273,6 +280,20 @@ impl<B> Clone for Sendegeraet<B> {
         Self {
             meister: self.meister.clone(),
         }
+    }
+}
+
+// WeakMeister
+
+struct SchwachMeister<W, B> {
+    maybe_inner: Weak<ArbeitssklaveInner<W, B>>,
+}
+
+impl<W, B> SchwachMeister<W, B> {
+    fn befehl<J>(&self, order: B, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
+        let inner = self.maybe_inner.upgrade()
+            .ok_or(Error::Terminated)?;
+        inner.befehl(order, thread_pool)
     }
 }
 

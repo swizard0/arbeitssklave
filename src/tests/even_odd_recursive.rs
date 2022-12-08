@@ -26,7 +26,7 @@ fn basic() {
 
     let driver_freie = Freie::new();
     let driver_sendegeraet = komm::Sendegeraet::starten(
-        driver_freie.meister(),
+        &driver_freie.meister(),
         thread_pool.clone(),
     );
 

@@ -149,8 +149,13 @@ impl<W, B> Default for Freie<W, B> {
 
 impl<W, B> Freie<W, B> {
     pub fn new() -> Self {
-        let inner = Freie::new_inner_with(None);
-        Self { inner, }
+        Self {
+            inner: Arc::new(Inner {
+                orders: crossbeam::queue::SegQueue::new(),
+                touch_tag: TouchTag::default(),
+                sklavenwelt: UnsafeCell::new(None),
+            }),
+        }
     }
 
     pub fn meister(&self) -> Meister<W, B> {
@@ -169,22 +174,14 @@ impl<W, B> Freie<W, B> {
             Some(Sklavenwelt::new(sklavenwelt));
 
         let meister = Meister { inner: self.inner, };
-        meister.whip(thread_pool)?;
+        meister.inner.whip(thread_pool)?;
         Ok(meister)
-    }
-
-    fn new_inner_with(sklavenwelt: Option<Sklavenwelt<W, B>>) -> Arc<Inner<W, B>> {
-        Arc::new(Inner {
-            orders: crossbeam::queue::SegQueue::new(),
-            touch_tag: TouchTag::default(),
-            sklavenwelt: UnsafeCell::new(sklavenwelt),
-        })
     }
 }
 
-impl<W, B> Meister<W, B> {
-    pub fn befehl<J>(&self, order: B, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
-        let mut prev_tag = self.inner.touch_tag.load();
+impl<W, B> Inner<W, B> {
+    fn befehl<J>(self: &Arc<Self>, order: B, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
+        let mut prev_tag = self.touch_tag.load();
         loop {
             let decoded = TouchTag::decompose(prev_tag);
             if decoded.is_terminated {
@@ -196,7 +193,7 @@ impl<W, B> Meister<W, B> {
                 orders_count: decoded.orders_count + 1,
                 ..decoded
             });
-            if let Err(changed_tag) = self.inner.touch_tag.try_set(prev_tag, new_tag) {
+            if let Err(changed_tag) = self.touch_tag.try_set(prev_tag, new_tag) {
                 prev_tag = changed_tag;
                 continue;
             }
@@ -204,18 +201,23 @@ impl<W, B> Meister<W, B> {
                 self.whip(thread_pool)?;
             }
 
-            self.inner.orders.push(order);
+            self.orders.push(order);
             return Ok(());
         }
     }
 
-    fn whip<J>(&self, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
-        let sklave_job = SklaveJob::new(self.inner.clone());
+    fn whip<J>(self: &Arc<Self>, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
+        let sklave_job = SklaveJob::new(self.clone());
         edeltraud::job(thread_pool, sklave_job)
             .map_err(Error::Edeltraud)
     }
 }
 
+impl<W, B> Meister<W, B> {
+    pub fn befehl<J>(&self, order: B, thread_pool: &edeltraud::Handle<J>) -> Result<(), Error> where J: From<SklaveJob<W, B>> {
+        self.inner.befehl(order, thread_pool)
+    }
+}
 
 impl<W, B> SklaveJob<W, B> {
     pub fn zu_ihren_diensten(mut self) -> Result<Gehorsam<SklaveJob<W, B>>, Error> {

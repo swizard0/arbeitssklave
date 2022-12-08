@@ -191,11 +191,11 @@ fn basic() {
     let stream_meister =
         stream::start(&thread_pool);
     let stream_sendegeraet =
-        komm::Sendegeraet::starten(stream_meister, thread_pool.clone());
+        komm::Sendegeraet::starten(&stream_meister, thread_pool.clone());
 
     let freie = Freie::new();
     let local_sendegeraet = komm::Sendegeraet::starten(
-        freie.meister(),
+        &freie.meister(),
         thread_pool.clone(),
     );
 

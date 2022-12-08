@@ -120,8 +120,7 @@ fn drop_bomb_with_umschlag_abbrechen() {
         )
         .unwrap();
     let sendegeraet = komm::Sendegeraet::starten(
-        #[allow(clippy::redundant_clone)]
-        adapter.sklave_meister.clone(),
+        &adapter.sklave_meister,
         thread_pool.clone(),
     );
     let rueckkopplung = sendegeraet
