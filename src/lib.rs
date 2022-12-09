@@ -274,7 +274,7 @@ impl<W, B> SklaveJob<W, B> {
         }
     }
 
-    pub fn zu_ihren_diensten_enmal(self) -> Result<GehorsamEinmal<W, B>, Error> {
+    pub fn zu_ihren_diensten_einmal(self) -> Result<GehorsamEinmal<W, B>, Error> {
         match self.zu_ihren_diensten()? {
             Gehorsam::Machen { befehle, } =>
                 match befehle.befehl() {
