@@ -274,6 +274,23 @@ impl<W, B> SklaveJob<W, B> {
         }
     }
 
+    pub fn zu_ihren_diensten_enmal(self) -> Result<GehorsamEinmal<W, B>, Error> {
+        match self.zu_ihren_diensten()? {
+            Gehorsam::Machen { befehle, } =>
+                match befehle.befehl() {
+                    SklavenBefehl::Mehr { befehl, mehr_befehle, } =>
+                        Ok(GehorsamEinmal::Machen {
+                            befehl,
+                            sklave_job: mehr_befehle.stoppen(),
+                        }),
+                    SklavenBefehl::Ende { .. } =>
+                        unreachable!("empty queue is totally unexpected after Gehorsam::Machen"),
+                },
+            Gehorsam::Rasten =>
+                Ok(GehorsamEinmal::Rasten),
+        }
+    }
+
     pub fn meister(&self) -> Meister<W, B> {
         Meister {
             inner: self.inner.clone(),
@@ -284,6 +301,14 @@ impl<W, B> SklaveJob<W, B> {
 pub enum Gehorsam<S> {
     Machen {
         befehle: SklavenBefehle<S>,
+    },
+    Rasten,
+}
+
+pub enum GehorsamEinmal<W, B> {
+    Machen {
+        befehl: B,
+        sklave_job: SklaveJob<W, B>,
     },
     Rasten,
 }
