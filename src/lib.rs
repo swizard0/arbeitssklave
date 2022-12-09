@@ -311,6 +311,10 @@ impl<W, B> SklavenBefehle<SklaveJob<W, B>> {
                 },
         }
     }
+
+    pub fn stoppen(self) -> SklaveJob<W, B> {
+        self.sklave_job
+    }
 }
 
 impl<W, B> Deref for SklaveJob<W, B> {
