@@ -8,7 +8,6 @@ use crate::{
     ewig,
     Meister,
     Gehorsam,
-    SklaveJob,
     SklavenBefehl,
 };
 
@@ -35,7 +34,7 @@ impl<B> Adapter<B> {
         thread_pool: &edeltraud::Handle<J>,
     )
         -> Result<Adapter<B>, Error>
-    where J: From<SklaveJob<Welt<B>, B>>,
+    where J: From<SklaveJob<B>>,
           B: Send + 'static,
     {
         let ewig_freie = ewig::Freie::new();
@@ -66,11 +65,13 @@ fn forward<B>(sklave: &mut ewig::Sklave<B, Error>, sync_tx: &mpsc::SyncSender<B>
 }
 
 pub enum Job<B> {
-    Sklave(SklaveJob<Welt<B>, B>),
+    Sklave(SklaveJob<B>),
 }
 
-impl<B> From<SklaveJob<Welt<B>, B>> for Job<B> {
-    fn from(job: SklaveJob<Welt<B>, B>) -> Job<B> {
+pub type SklaveJob<B> = crate::SklaveJob<Welt<B>, B>;
+
+impl<B> From<SklaveJob<B>> for Job<B> {
+    fn from(job: SklaveJob<B>) -> Job<B> {
         Job::Sklave(job)
     }
 }
