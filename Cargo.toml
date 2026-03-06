@@ -3,6 +3,8 @@ name = "arbeitssklave"
 version = "0.23.0"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Primitive actor framework with static dispatching only on top of `edeltraud` thread pool."
+license = "MIT"
+repository = "https://github.com/swizard0/arbeitssklave"
 edition = "2024"
 
 [dependencies]
