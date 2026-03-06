@@ -22,6 +22,7 @@ fn stress_8() {
     }
 
     #[derive(Debug)]
+    #[allow(dead_code)]
     struct ConsumerError(ewig::Error);
 
     impl From<ewig::Error> for ConsumerError {

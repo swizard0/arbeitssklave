@@ -1,13 +1,11 @@
 [package]
 name = "arbeitssklave"
-version = "0.22.4"
+version = "0.23.0"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 description = "Primitive actor framework with static dispatching only on top of `edeltraud` thread pool."
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-edeltraud = { git = "https://github.com/swizard0/edeltraud.git" }
-
+edeltraud = "^0.17"
 crossbeam = "^0.8"
-
 log = "^0.4"
